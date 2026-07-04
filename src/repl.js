@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { PROVIDERS, detectProviders, parseModelSpec, formatModel, runTurn } from './providers.js'
+import { PROVIDERS, MODES, detectProviders, parseModelSpec, formatModel, runTurn } from './providers.js'
 import { banner, rule, bold, dim, faint, text, violet, green, red, yellow, tintCursor, resetCursor } from './ui.js'
 
 const CONFIG_DIR = path.join(os.homedir(), '.akorith')
@@ -26,7 +26,7 @@ function saveConfig(config) {
   }
 }
 
-const COMMANDS = ['/help', '/models', '/model', '/new', '/clear', '/exit', '/quit']
+const COMMANDS = ['/help', '/models', '/model', '/mode', '/new', '/clear', '/exit', '/quit']
 
 export function startRepl({ version, initialModel }) {
   const config = loadConfig()
@@ -45,6 +45,8 @@ export function startRepl({ version, initialModel }) {
     console.error('No agent CLI found. Install one of: claude, codex, opencode — then run akorith again.')
     process.exit(1)
   }
+
+  let mode = MODES[config.mode] ? config.mode : 'act'
 
   // One conversation thread per provider; resume flags only make sense after
   // the first turn of that provider in this Akorith session.
@@ -82,6 +84,7 @@ export function startRepl({ version, initialModel }) {
   function printStatus() {
     const parts = [
       green('●') + ' ' + dim(formatModel(selection)),
+      mode === 'act' ? green('act') : yellow('view'),
       faint(process.cwd().replace(os.homedir(), '~')),
       started[selection.provider] ? faint('session continues') : faint('new session'),
     ]
@@ -105,6 +108,7 @@ export function startRepl({ version, initialModel }) {
     console.log(text(bold('Commands')))
     console.log(`  ${violet('/model <spec>')}   switch model — e.g. /model claude/sonnet, /model codex`)
     console.log(`  ${violet('/models')}         list providers and how to address their models`)
+    console.log(`  ${violet('/mode <m>')}       view (read-only) or act (can edit files) — default act`)
     console.log(`  ${violet('/new')}            start fresh conversations (all providers)`)
     console.log(`  ${violet('/clear')}          clear the screen`)
     console.log(`  ${violet('/exit')}           leave Akorith`)
@@ -135,6 +139,26 @@ export function startRepl({ version, initialModel }) {
     }
     if (input === '/models') {
       listModels()
+      return
+    }
+    if (input === '/mode' || input.startsWith('/mode ')) {
+      const wanted = input.slice(5).trim()
+      if (!wanted) {
+        console.log()
+        for (const [name, desc] of Object.entries(MODES)) {
+          const marker = name === mode ? violet('▸') : ' '
+          console.log(`  ${marker} ${text(bold(name.padEnd(6)))} ${faint(desc)}`)
+        }
+        console.log()
+        return
+      }
+      if (!MODES[wanted]) {
+        console.log(red('Unknown mode. ') + dim('Use: ' + Object.keys(MODES).join(' or ')))
+        return
+      }
+      mode = wanted
+      saveConfig({ ...config, mode })
+      console.log(green('✓ ') + 'Mode set to ' + bold(mode) + ' ' + faint('— ' + MODES[mode]))
       return
     }
     if (input === '/new') {
@@ -195,7 +219,7 @@ export function startRepl({ version, initialModel }) {
     console.log(rule(formatModel(selection)))
     const startedAt = Date.now()
     const code = await runTurn(
-      { selection, prompt: input, resume: started[selection.provider], cwd: process.cwd() },
+      { selection, prompt: input, resume: started[selection.provider], cwd: process.cwd(), mode },
       { onSpawn: (child) => (activeChild = child) },
     )
     activeChild = null

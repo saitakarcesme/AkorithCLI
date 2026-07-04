@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module'
 import { startRepl } from '../src/repl.js'
-import { detectProviders, parseModelSpec, runTurn } from '../src/providers.js'
+import { MODES, detectProviders, parseModelSpec, runTurn } from '../src/providers.js'
 
 const require = createRequire(import.meta.url)
 const { version } = require('../package.json')
@@ -15,6 +15,7 @@ Usage:
   akorith                     start the interactive workspace
   akorith -m <spec>           start with a model, e.g. -m claude/sonnet
   akorith -p "<prompt>"       one-shot: send a prompt, print the answer, exit
+  akorith --mode <m>          view (read-only) or act (can edit files); default act
   akorith --version           print version
 
 Model specs: <provider>[/<model>] with provider one of claude, codex, opencode, ollama.
@@ -23,6 +24,7 @@ Inside the workspace: /model to switch, /help for everything else.`)
 
 let initialModel = null
 let oneShot = null
+let mode = 'act'
 
 for (let i = 0; i < argv.length; i++) {
   const arg = argv[i]
@@ -36,6 +38,8 @@ for (let i = 0; i < argv.length; i++) {
     initialModel = argv[++i]
   } else if (arg === '--prompt' || arg === '-p') {
     oneShot = argv[++i]
+  } else if (arg === '--mode') {
+    mode = argv[++i]
   } else {
     console.error(`Unknown argument: ${arg}`)
     usage()
@@ -63,7 +67,11 @@ if (oneShot !== null) {
     console.error('No usable agent CLI found for this prompt.')
     process.exit(1)
   }
-  const code = await runTurn({ selection, prompt: oneShot, resume: false, cwd: process.cwd() })
+  if (!MODES[mode]) {
+    console.error(`Invalid mode: ${mode} (expected ${Object.keys(MODES).join(' or ')})`)
+    process.exit(1)
+  }
+  const code = await runTurn({ selection, prompt: oneShot, resume: false, cwd: process.cwd(), mode })
   process.exit(code)
 }
 

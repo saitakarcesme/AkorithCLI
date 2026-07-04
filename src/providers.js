@@ -12,10 +12,12 @@ export const PROVIDERS = {
     codename: 'Atlantis',
     bin: 'claude',
     hint: 'model aliases: opus, sonnet, haiku (e.g. /model claude/sonnet)',
-    args({ prompt, model, resume }) {
+    args({ prompt, model, resume, mode }) {
       const args = ['-p', prompt]
       if (model) args.push('--model', model)
       if (resume) args.push('-c')
+      // plan mode is Claude Code's read-only session; acceptEdits lets it act
+      args.push('--permission-mode', mode === 'act' ? 'acceptEdits' : 'plan')
       return args
     },
   },
@@ -25,10 +27,13 @@ export const PROVIDERS = {
     codename: 'Olympus',
     bin: 'codex',
     hint: 'pass any Codex model id (e.g. /model codex/gpt-5-codex)',
-    args({ prompt, model, resume }) {
+    args({ prompt, model, resume, mode }) {
       const args = resume ? ['exec', 'resume', '--last', prompt] : ['exec', prompt]
       args.push('--skip-git-repo-check')
       if (model) args.push('-m', model)
+      // `resume` doesn't take -s, but both forms accept -c overrides
+      const sandbox = mode === 'act' ? 'workspace-write' : 'read-only'
+      args.push('-c', `sandbox_mode="${sandbox}"`)
       return args
     },
   },
@@ -38,10 +43,13 @@ export const PROVIDERS = {
     codename: 'Gaia',
     bin: 'opencode',
     hint: 'model format provider/model (e.g. /model opencode/anthropic/claude-sonnet-4-5)',
-    args({ prompt, model, resume }) {
+    args({ prompt, model, resume, mode }) {
       const args = ['run', prompt]
       if (model) args.push('-m', model)
       if (resume) args.push('-c')
+      // OpenCode's built-in plan agent is its read-only mode
+      if (mode === 'act') args.push('--auto')
+      else args.push('--agent', 'plan')
       return args
     },
   },
@@ -76,6 +84,12 @@ export function parseModelSpec(spec) {
   return { provider: provider.id, model: rest.join('/') || null }
 }
 
+// What each permission mode means, provider by provider.
+export const MODES = {
+  view: 'read-only — models can look but never write or execute',
+  act: 'act — edits auto-approved, commands sandboxed to the workspace',
+}
+
 export function formatModel(selection) {
   const p = PROVIDERS[selection.provider]
   const model = selection.model || 'default'
@@ -88,9 +102,9 @@ export function formatModel(selection) {
 // child. Output is piped (not inherited) so the spinner can hand off cleanly —
 // FORCE_COLOR/CLICOLOR_FORCE keep the providers' own colors alive despite the
 // non-TTY pipe.
-export function runTurn({ selection, prompt, resume, cwd }, { onSpawn } = {}) {
+export function runTurn({ selection, prompt, resume, cwd, mode = 'act' }, { onSpawn } = {}) {
   const provider = PROVIDERS[selection.provider]
-  const args = provider.args({ prompt, model: selection.model, resume })
+  const args = provider.args({ prompt, model: selection.model, resume, mode })
   return new Promise((resolve) => {
     const child = spawn(provider.bin, args, {
       cwd,

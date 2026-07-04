@@ -29,6 +29,7 @@ npm install -g .
 
 ```
 ❯ refactor the auth module and add tests        # goes to the active model
+❯ /mode view                                    # read-only; /mode act to work (default)
 ❯ /model codex                                  # switch to Codex (Olympus)
 ❯ /model claude/sonnet                          # Claude with a specific model
 ❯ /model opencode/anthropic/claude-sonnet-4-5   # OpenCode with provider/model
@@ -54,7 +55,15 @@ akorith -p "summarize the diff" -m claude/haiku
 | Local | Ollama | `ollama run` |
 
 Each provider keeps its own conversation thread for the session; `/new` resets all of
-them. Your last model choice is remembered in `~/.akorith/cli.json`.
+them. Your last model and mode choices are remembered in `~/.akorith/cli.json`.
+
+### Permission modes
+
+- **act** (default) — models can do real work: file edits are auto-approved and
+  commands run sandboxed to the workspace (`claude --permission-mode acceptEdits`,
+  `codex` with `sandbox_mode="workspace-write"`, `opencode --auto`).
+- **view** — strictly read-only: `claude --permission-mode plan`, Codex's read-only
+  sandbox, and OpenCode's plan agent. Models can look but never write or execute.
 
 ## Requirements
 
