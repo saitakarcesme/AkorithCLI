@@ -8,6 +8,7 @@ import { startSpinner } from './ui.js'
 export const PROVIDERS = {
   claude: {
     id: 'claude',
+    display: 'Claude',
     codename: 'Atlantis',
     bin: 'claude',
     hint: 'model aliases: opus, sonnet, haiku (e.g. /model claude/sonnet)',
@@ -20,6 +21,7 @@ export const PROVIDERS = {
   },
   codex: {
     id: 'codex',
+    display: 'Codex',
     codename: 'Olympus',
     bin: 'codex',
     hint: 'pass any Codex model id (e.g. /model codex/gpt-5-codex)',
@@ -32,6 +34,7 @@ export const PROVIDERS = {
   },
   opencode: {
     id: 'opencode',
+    display: 'OpenCode',
     codename: 'Gaia',
     bin: 'opencode',
     hint: 'model format provider/model (e.g. /model opencode/anthropic/claude-sonnet-4-5)',
@@ -44,6 +47,7 @@ export const PROVIDERS = {
   },
   ollama: {
     id: 'ollama',
+    display: 'Ollama',
     codename: 'Local',
     bin: 'ollama',
     hint: 'requires a running Ollama install (e.g. /model ollama/qwen3)',
@@ -95,7 +99,7 @@ export function runTurn({ selection, prompt, resume, cwd }, { onSpawn } = {}) {
     })
     onSpawn?.(child)
 
-    let spinner = startSpinner(provider.codename.toLowerCase())
+    let spinner = startSpinner(provider.codename.toLowerCase(), provider.display)
     const handoff = () => {
       if (spinner) {
         spinner.stop()

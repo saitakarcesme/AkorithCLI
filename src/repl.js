@@ -4,7 +4,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { PROVIDERS, detectProviders, parseModelSpec, formatModel, runTurn } from './providers.js'
-import { banner, rule, bold, dim, faint, accent, gold, green, red, yellow } from './ui.js'
+import { banner, rule, bold, dim, faint, text, violet, green, red, yellow, tintCursor, resetCursor } from './ui.js'
 
 const CONFIG_DIR = path.join(os.homedir(), '.akorith')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'cli.json')
@@ -53,6 +53,7 @@ export function startRepl({ version, initialModel }) {
   let lastSigint = 0
 
   console.clear()
+  tintCursor()
   console.log(banner(version))
   console.log()
   printStatus()
@@ -62,7 +63,7 @@ export function startRepl({ version, initialModel }) {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: gold('❯ '),
+    prompt: text(bold('❯ ')) ,
     completer(line) {
       if (line.startsWith('/model ')) {
         const partial = line.slice(7)
@@ -80,8 +81,8 @@ export function startRepl({ version, initialModel }) {
 
   function printStatus() {
     const parts = [
-      gold('●') + ' ' + accent(bold(formatModel(selection))),
-      dim(process.cwd().replace(os.homedir(), '~')),
+      green('●') + ' ' + dim(formatModel(selection)),
+      faint(process.cwd().replace(os.homedir(), '~')),
       started[selection.provider] ? faint('session continues') : faint('new session'),
     ]
     console.log(parts.join(faint('  ·  ')))
@@ -89,11 +90,11 @@ export function startRepl({ version, initialModel }) {
 
   function listModels() {
     console.log()
-    console.log(accent(bold('Providers')) + dim(' — switch with /model <provider>[/<model>]'))
+    console.log(text(bold('Providers')) + dim(' — switch with /model <provider>[/<model>]'))
     for (const p of Object.values(PROVIDERS)) {
       const status = available[p.id] ? green('ready') : red('not installed')
-      const active = selection.provider === p.id ? gold('▸') : ' '
-      console.log(`  ${active} ${accent(bold(p.id.padEnd(9)))} ${gold(p.codename.padEnd(9))} ${status}`)
+      const active = selection.provider === p.id ? violet('▸') : ' '
+      console.log(`  ${active} ${text(bold(p.id.padEnd(9)))} ${violet(p.codename.padEnd(9))} ${status}`)
       console.log(`      ${faint(p.hint)}`)
     }
     console.log()
@@ -101,13 +102,13 @@ export function startRepl({ version, initialModel }) {
 
   function help() {
     console.log()
-    console.log(accent(bold('Commands')))
-    console.log(`  ${gold('/model <spec>')}   switch model — e.g. /model claude/sonnet, /model codex`)
-    console.log(`  ${gold('/models')}         list providers and how to address their models`)
-    console.log(`  ${gold('/new')}            start fresh conversations (all providers)`)
-    console.log(`  ${gold('/clear')}          clear the screen`)
-    console.log(`  ${gold('/exit')}           leave Akorith`)
-    console.log(`  ${gold('!<command>')}      run a shell command in place (e.g. !git status)`)
+    console.log(text(bold('Commands')))
+    console.log(`  ${violet('/model <spec>')}   switch model — e.g. /model claude/sonnet, /model codex`)
+    console.log(`  ${violet('/models')}         list providers and how to address their models`)
+    console.log(`  ${violet('/new')}            start fresh conversations (all providers)`)
+    console.log(`  ${violet('/clear')}          clear the screen`)
+    console.log(`  ${violet('/exit')}           leave Akorith`)
+    console.log(`  ${violet('!<command>')}      run a shell command in place (e.g. !git status)`)
     console.log()
     console.log(dim('Anything else is sent to the active model. Conversations continue per'))
     console.log(dim('provider until /new. Ctrl+C cancels a running turn; twice exits.'))
@@ -192,12 +193,21 @@ export function startRepl({ version, initialModel }) {
 
     // A real prompt — hand it to the active provider, streaming.
     console.log(rule(formatModel(selection)))
+    const startedAt = Date.now()
     const code = await runTurn(
       { selection, prompt: input, resume: started[selection.provider], cwd: process.cwd() },
       { onSpawn: (child) => (activeChild = child) },
     )
     activeChild = null
-    if (code === 0) started[selection.provider] = true
+    const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
+    if (code === 0) {
+      started[selection.provider] = true
+      console.log(green(`✓ done in ${seconds}s`))
+    } else if (code === 130) {
+      console.log(yellow('■ cancelled'))
+    } else {
+      console.log(red(`✗ exited with code ${code}`))
+    }
     console.log(rule())
     printStatus()
   }
@@ -209,6 +219,7 @@ export function startRepl({ version, initialModel }) {
   let closing = false
 
   function finish() {
+    resetCursor()
     console.log(dim('\nAkorith out. Your work stayed on your machine.'))
     process.exit(0)
   }
