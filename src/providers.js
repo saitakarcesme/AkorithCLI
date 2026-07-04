@@ -3,6 +3,7 @@
 // Atlantis = Claude, Olympus = Codex, Gaia = OpenCode.
 
 import { spawn, spawnSync } from 'node:child_process'
+import { startSpinner } from './ui.js'
 
 export const PROVIDERS = {
   claude: {
@@ -78,18 +79,40 @@ export function formatModel(selection) {
 }
 
 // Runs one turn against the selected provider, streaming output straight to
-// the terminal. Resolves with the exit code; Ctrl+C kills only the child.
+// the terminal. A colored "thinking/working" spinner runs until the provider
+// produces its first byte. Resolves with the exit code; Ctrl+C kills only the
+// child. Output is piped (not inherited) so the spinner can hand off cleanly —
+// FORCE_COLOR/CLICOLOR_FORCE keep the providers' own colors alive despite the
+// non-TTY pipe.
 export function runTurn({ selection, prompt, resume, cwd }, { onSpawn } = {}) {
   const provider = PROVIDERS[selection.provider]
   const args = provider.args({ prompt, model: selection.model, resume })
   return new Promise((resolve) => {
     const child = spawn(provider.bin, args, {
       cwd,
-      stdio: ['ignore', 'inherit', 'inherit'],
-      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, FORCE_COLOR: '1', CLICOLOR_FORCE: '1' },
     })
     onSpawn?.(child)
+
+    let spinner = startSpinner(provider.codename.toLowerCase())
+    const handoff = () => {
+      if (spinner) {
+        spinner.stop()
+        spinner = null
+      }
+    }
+    child.stdout.on('data', (chunk) => {
+      handoff()
+      process.stdout.write(chunk)
+    })
+    child.stderr.on('data', (chunk) => {
+      handoff()
+      process.stderr.write(chunk)
+    })
+
     child.on('error', (err) => {
+      handoff()
       if (err.code === 'ENOENT') {
         console.error(`\n${provider.bin}: not installed — install it to use this provider.`)
       } else {
@@ -97,6 +120,9 @@ export function runTurn({ selection, prompt, resume, cwd }, { onSpawn } = {}) {
       }
       resolve(1)
     })
-    child.on('exit', (code, signal) => resolve(signal ? 130 : code ?? 0))
+    child.on('exit', (code, signal) => {
+      handoff()
+      resolve(signal ? 130 : code ?? 0)
+    })
   })
 }

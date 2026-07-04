@@ -4,7 +4,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { PROVIDERS, detectProviders, parseModelSpec, formatModel, runTurn } from './providers.js'
-import { banner, rule, bold, dim, accent, green, red, yellow } from './ui.js'
+import { banner, rule, bold, dim, faint, accent, gold, green, red, yellow } from './ui.js'
 
 const CONFIG_DIR = path.join(os.homedir(), '.akorith')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'cli.json')
@@ -62,7 +62,7 @@ export function startRepl({ version, initialModel }) {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: accent('❯ '),
+    prompt: gold('❯ '),
     completer(line) {
       if (line.startsWith('/model ')) {
         const partial = line.slice(7)
@@ -80,34 +80,34 @@ export function startRepl({ version, initialModel }) {
 
   function printStatus() {
     const parts = [
-      accent('●') + ' ' + bold(formatModel(selection)),
+      gold('●') + ' ' + accent(bold(formatModel(selection))),
       dim(process.cwd().replace(os.homedir(), '~')),
-      started[selection.provider] ? dim('session continues') : dim('new session'),
+      started[selection.provider] ? faint('session continues') : faint('new session'),
     ]
-    console.log(parts.join(dim('  ·  ')))
+    console.log(parts.join(faint('  ·  ')))
   }
 
   function listModels() {
     console.log()
-    console.log(bold('Providers') + dim(' — switch with /model <provider>[/<model>]'))
+    console.log(accent(bold('Providers')) + dim(' — switch with /model <provider>[/<model>]'))
     for (const p of Object.values(PROVIDERS)) {
       const status = available[p.id] ? green('ready') : red('not installed')
-      const active = selection.provider === p.id ? accent('▸') : ' '
-      console.log(`  ${active} ${bold(p.id.padEnd(9))} ${dim(p.codename.padEnd(9))} ${status}`)
-      console.log(`      ${dim(p.hint)}`)
+      const active = selection.provider === p.id ? gold('▸') : ' '
+      console.log(`  ${active} ${accent(bold(p.id.padEnd(9)))} ${gold(p.codename.padEnd(9))} ${status}`)
+      console.log(`      ${faint(p.hint)}`)
     }
     console.log()
   }
 
   function help() {
     console.log()
-    console.log(bold('Commands'))
-    console.log(`  ${accent('/model <spec>')}   switch model — e.g. /model claude/sonnet, /model codex`)
-    console.log(`  ${accent('/models')}         list providers and how to address their models`)
-    console.log(`  ${accent('/new')}            start fresh conversations (all providers)`)
-    console.log(`  ${accent('/clear')}          clear the screen`)
-    console.log(`  ${accent('/exit')}           leave Akorith`)
-    console.log(`  ${accent('!<command>')}      run a shell command in place (e.g. !git status)`)
+    console.log(accent(bold('Commands')))
+    console.log(`  ${gold('/model <spec>')}   switch model — e.g. /model claude/sonnet, /model codex`)
+    console.log(`  ${gold('/models')}         list providers and how to address their models`)
+    console.log(`  ${gold('/new')}            start fresh conversations (all providers)`)
+    console.log(`  ${gold('/clear')}          clear the screen`)
+    console.log(`  ${gold('/exit')}           leave Akorith`)
+    console.log(`  ${gold('!<command>')}      run a shell command in place (e.g. !git status)`)
     console.log()
     console.log(dim('Anything else is sent to the active model. Conversations continue per'))
     console.log(dim('provider until /new. Ctrl+C cancels a running turn; twice exits.'))
