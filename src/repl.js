@@ -4,7 +4,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { PROVIDERS, MODES, detectProviders, parseModelSpec, formatModel, runTurn } from './providers.js'
-import { banner, rule, bold, dim, faint, text, violet, green, red, yellow, tintCursor, resetCursor } from './ui.js'
+import { animateBanner, rule, bold, dim, faint, text, violet, green, red, yellow, tintCursor, resetCursor } from './ui.js'
 
 const CONFIG_DIR = path.join(os.homedir(), '.akorith')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'cli.json')
@@ -28,7 +28,7 @@ function saveConfig(config) {
 
 const COMMANDS = ['/help', '/models', '/model', '/mode', '/new', '/clear', '/exit', '/quit']
 
-export function startRepl({ version, initialModel }) {
+export async function startRepl({ version, initialModel }) {
   const config = loadConfig()
   const available = detectProviders()
 
@@ -56,7 +56,7 @@ export function startRepl({ version, initialModel }) {
 
   console.clear()
   tintCursor()
-  console.log(banner(version))
+  await animateBanner(version)
   console.log()
   printStatus()
   console.log(dim('Type a task. /help for commands, /model to switch models, ! to run shell.'))

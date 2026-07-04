@@ -3,7 +3,7 @@
 // Atlantis = Claude, Olympus = Codex, Gaia = OpenCode.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { startSpinner } from './ui.js'
+import { startSpinner, stripAnsi, text as bright, dim, faint, green, red, italic } from './ui.js'
 
 export const PROVIDERS = {
   claude: {
@@ -96,12 +96,153 @@ export function formatModel(selection) {
   return `${p.codename.toLowerCase()} · ${p.id}/${model}`
 }
 
-// Runs one turn against the selected provider, streaming output straight to
-// the terminal. A colored "thinking/working" spinner runs until the provider
-// produces its first byte. Resolves with the exit code; Ctrl+C kills only the
-// child. Output is piped (not inherited) so the spinner can hand off cleanly —
-// FORCE_COLOR/CLICOLOR_FORCE keep the providers' own colors alive despite the
-// non-TTY pipe.
+// Per-provider output renderers: turn the raw CLI streams into a quiet,
+// readable feed. Every rendered line goes through print() (the spinner's log),
+// so the animated status line stays pinned at the bottom for the whole turn.
+function createRenderer(providerId, print) {
+  if (providerId === 'codex') {
+    // codex exec: stdout = final answer only; stderr = the full event log
+    // (version/workdir preamble, `user` echo, `codex` messages, `exec` blocks,
+    // `tokens used`). Render the interesting events, drop the boilerplate.
+    let dashes = 0
+    let block = 'suppress'
+    let execHeader = false
+    let patchOk = null // waiting for the patched file's path line
+    let inDiff = false
+    let spokeFromLog = false
+    let lastBlank = true
+    const finalAnswer = []
+    const isDiffLine = (plain) =>
+      /^(diff --git |index [0-9a-f]|new file mode |deleted file mode |--- |\+\+\+ |@@ )/.test(plain) ||
+      (inDiff && /^[+\- ]/.test(plain))
+    const say = (line) => {
+      const plain = stripAnsi(line).trimEnd()
+      if (!plain) {
+        inDiff = false
+        if (!lastBlank) print('')
+        lastBlank = true
+        return
+      }
+      // codex re-prints the cumulative diff after events — never show raw diffs
+      if (isDiffLine(plain)) {
+        inDiff = true
+        return
+      }
+      lastBlank = false
+      print(bright(plain))
+      spokeFromLog = true
+    }
+    return {
+      stdoutLine(line) {
+        finalAnswer.push(line)
+      },
+      stderrLine(line) {
+        const plain = stripAnsi(line).trimEnd()
+        if (dashes < 2) {
+          if (/^-{4,}$/.test(plain.trim())) dashes++
+          return
+        }
+        if (plain === 'user') return void (block = 'suppress')
+        if (plain === 'codex') return void ((block = 'say'), (inDiff = false))
+        if (plain === 'thinking') return void (block = 'think')
+        if (plain === 'exec') return void ((block = 'exec'), (execHeader = true))
+        if (plain === 'apply patch') return void ((block = 'patch'), (patchOk = null))
+        if (plain === 'tokens used') return void (block = 'tokens')
+        if (block === 'say') say(line)
+        else if (block === 'think' && plain) print(faint(italic(plain)))
+        else if (block === 'exec') {
+          if (execHeader) {
+            execHeader = false
+            const m = plain.match(/-l?c '([\s\S]+)' in /)
+            const cmd = m ? m[1] : plain.replace(/ in \/.*$/, '')
+            print(faint('● ') + dim(cmd))
+            lastBlank = false
+          } else if (/succeeded in \S+:?\s*$/.test(plain)) {
+            print(green('  ✓ ') + faint(plain.trim().replace(/:$/, '')))
+          } else if (/(failed|exited \d+) in \S+:?\s*$/.test(plain)) {
+            print(red('  ✗ ') + faint(plain.trim().replace(/:$/, '')))
+          }
+          // command output itself stays quiet — codex narrates what matters
+        } else if (block === 'patch') {
+          if (/^patch: /.test(plain)) {
+            patchOk = /^patch: (completed|applied|success)/.test(plain)
+          } else if (patchOk !== null && plain && !isDiffLine(plain)) {
+            const file = plain.split('/').pop()
+            const mark = patchOk ? green(' ✓') : red(' ✗')
+            print(faint('● ') + dim('apply patch ' + file) + mark)
+            lastBlank = false
+            patchOk = null
+          }
+          // diff bodies stay quiet
+        } else if (block === 'tokens' && plain) {
+          print(faint('tokens ' + plain.trim()))
+          block = 'suppress'
+        }
+      },
+      flush() {
+        // stderr log went missing (future codex versions?) — fall back to stdout
+        if (!spokeFromLog && finalAnswer.some((l) => stripAnsi(l).trim())) {
+          for (const line of finalAnswer) print(line)
+        }
+      },
+    }
+  }
+
+  if (providerId === 'opencode') {
+    // drop the leading blanks and the "> build · model" banner, keep the rest
+    let started = false
+    return {
+      stdoutLine(line) {
+        const plain = stripAnsi(line).trim()
+        if (!started) {
+          if (!plain || plain.startsWith('>')) return
+          started = true
+        }
+        print(line)
+      },
+      stderrLine(line) {
+        const plain = stripAnsi(line).trim()
+        if (plain) print(dim(plain))
+      },
+      flush() {},
+    }
+  }
+
+  // claude / ollama: answer arrives on stdout as-is
+  return {
+    stdoutLine(line) {
+      print(line)
+    },
+    stderrLine(line) {
+      const plain = stripAnsi(line).trim()
+      if (plain) print(dim(plain))
+    },
+    flush() {},
+  }
+}
+
+function lineSplitter(onLine) {
+  let buf = ''
+  return {
+    push(chunk) {
+      buf += chunk.toString()
+      let idx
+      while ((idx = buf.indexOf('\n')) !== -1) {
+        onLine(buf.slice(0, idx).replace(/\r$/, ''))
+        buf = buf.slice(idx + 1)
+      }
+    },
+    end() {
+      if (buf) onLine(buf)
+      buf = ''
+    },
+  }
+}
+
+// Runs one turn against the selected provider. The animated status line stays
+// alive for the entire turn — rendered output lines flow in above it via the
+// renderer. Resolves with the exit code; Ctrl+C kills only the child.
+// FORCE_COLOR/CLICOLOR_FORCE keep the providers' own colors despite the pipe.
 export function runTurn({ selection, prompt, resume, cwd, mode = 'act' }, { onSpawn } = {}) {
   const provider = PROVIDERS[selection.provider]
   const args = provider.args({ prompt, model: selection.model, resume, mode })
@@ -113,34 +254,34 @@ export function runTurn({ selection, prompt, resume, cwd, mode = 'act' }, { onSp
     })
     onSpawn?.(child)
 
-    let spinner = startSpinner(provider.codename.toLowerCase(), provider.display)
-    const handoff = () => {
-      if (spinner) {
-        spinner.stop()
-        spinner = null
-      }
-    }
-    child.stdout.on('data', (chunk) => {
-      handoff()
-      process.stdout.write(chunk)
-    })
-    child.stderr.on('data', (chunk) => {
-      handoff()
-      process.stderr.write(chunk)
-    })
+    const spinner = startSpinner(provider.codename.toLowerCase(), provider.display)
+    const renderer = createRenderer(provider.id, (line) => spinner.log(line))
+    const out = lineSplitter((l) => renderer.stdoutLine(l))
+    const err = lineSplitter((l) => renderer.stderrLine(l))
+    child.stdout.on('data', (chunk) => out.push(chunk))
+    child.stderr.on('data', (chunk) => err.push(chunk))
 
-    child.on('error', (err) => {
-      handoff()
-      if (err.code === 'ENOENT') {
+    const wrapUp = () => {
+      out.end()
+      err.end()
+      renderer.flush()
+      spinner.stop()
+    }
+    child.on('error', (err_) => {
+      wrapUp()
+      if (err_.code === 'ENOENT') {
         console.error(`\n${provider.bin}: not installed — install it to use this provider.`)
       } else {
-        console.error(`\n${provider.bin}: ${err.message}`)
+        console.error(`\n${provider.bin}: ${err_.message}`)
       }
       resolve(1)
     })
     child.on('exit', (code, signal) => {
-      handoff()
-      resolve(signal ? 130 : code ?? 0)
+      // stdio streams may still be draining when exit fires
+      setTimeout(() => {
+        wrapUp()
+        resolve(signal ? 130 : code ?? 0)
+      }, 60)
     })
   })
 }

@@ -35,11 +35,48 @@ export const red = fg('#f87171', 210)
 export const yellow = fg('#fbbf24', 214)
 export const cyan = fg('#38bdf8', 81) // sky-400 — hero gradient start
 
+export function stripAnsi(s) {
+  return String(s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
+}
+
+// The brand ramp the /cli hero uses: violet → sky → emerald.
+const RAMP = [
+  [0xa7, 0x8b, 0xfa],
+  [0x38, 0xbd, 0xf8],
+  [0x34, 0xd3, 0x99],
+]
+
+// Sample the ramp at t ∈ [0,1) — wraps around back to violet for animation.
+function rampColor(t) {
+  const stops = [...RAMP, RAMP[0]]
+  const scaled = (t % 1) * (stops.length - 1)
+  const i = Math.floor(scaled)
+  const f = scaled - i
+  return stops[i].map((c, k) => Math.round(c + (stops[i + 1][k] - c) * f))
+}
+
+function paintRamp(s, offset = 0, spread = 1) {
+  if (!enabled || !truecolor) return violet(s)
+  const chars = [...s]
+  const visible = chars.filter((c) => c.trim()).length
+  let i = 0
+  return (
+    chars
+      .map((c) => {
+        if (!c.trim()) return c
+        const t = offset + (visible > 1 ? (i++ / (visible - 1)) * spread : 0)
+        const [r, g, b] = rampColor(((t % 1) + 1) % 1)
+        return `\x1b[38;2;${r};${g};${b}m${c}`
+      })
+      .join('') + '\x1b[39m'
+  )
+}
+
 // per-character sky→emerald gradient, like the hero's pixel "terminal."
 export function gradient(s) {
   if (!enabled || !truecolor) return cyan(s)
-  const from = [0x38, 0xbd, 0xf8]
-  const to = [0x34, 0xd3, 0x99]
+  const from = RAMP[1]
+  const to = RAMP[2]
   const chars = [...s]
   const visible = chars.filter((c) => c.trim()).length
   let i = 0
@@ -72,20 +109,42 @@ const WORDMARK = [
   '╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝',
 ]
 
+function wordmarkFrame(offset) {
+  // diagonal sweep: each row shifts the ramp slightly for a woven look
+  return WORDMARK.map((row, r) => paintRamp(row, offset + r * 0.045, 0.55)).join('\n')
+}
+
+function taglines(version) {
+  return [
+    `${text(bold('Akorith'))} ${faint('v' + version)} — ${dim('the Agent OS for')} ${violet('your')} ${gradient('terminal.')}`,
+    faint('One prompt for Claude, Codex, and OpenCode. No API keys — your CLIs, your machine.'),
+  ].join('\n')
+}
+
 export function banner(version) {
   const cols = process.stdout.columns || 80
-  const lines = []
-  if (cols >= 58) {
-    for (const row of WORDMARK) lines.push(violet(row))
-  } else {
-    lines.push(violet(bold('AKORITH')))
+  const mark = cols >= 58 ? wordmarkFrame(0) : violet(bold('AKORITH'))
+  return mark + '\n\n' + taglines(version)
+}
+
+// Startup animation: the wordmark's violet→sky→emerald ramp flows across the
+// letters for ~2s, then settles. Skipped when not a truecolor TTY.
+export async function animateBanner(version) {
+  const cols = process.stdout.columns || 80
+  if (!process.stdout.isTTY || !truecolor || cols < 58) {
+    console.log(banner(version))
+    return
   }
-  lines.push('')
-  lines.push(
-    `${text(bold('Akorith'))} ${faint('v' + version)} — ${dim('the Agent OS for')} ${violet('your')} ${gradient('terminal.')}`,
-  )
-  lines.push(faint('One prompt for Claude, Codex, and OpenCode. No API keys — your CLIs, your machine.'))
-  return lines.join('\n')
+  process.stdout.write('\x1b[?25l') // hide cursor
+  process.stdout.write(wordmarkFrame(0) + '\n')
+  const frames = 36
+  for (let f = 1; f <= frames; f++) {
+    await new Promise((r) => setTimeout(r, 45))
+    process.stdout.write(`\x1b[${WORDMARK.length}A\r` + wordmarkFrame(f / frames) + '\n')
+  }
+  process.stdout.write('\x1b[?25h') // show cursor
+  console.log()
+  console.log(taglines(version))
 }
 
 // Cursor tint to match the mock's violet caret. OSC 12 is widely supported
@@ -97,28 +156,46 @@ export function resetCursor() {
   if (process.stdout.isTTY) process.stdout.write('\x1b]112\x07')
 }
 
-// Live status line, exactly like the page mock: "[atlantis] Claude · planning…"
-// in dim text with an animated ellipsis, until the provider's first byte.
-// TTY-only; no-op when piped.
+// Live status line — stays up for the WHOLE turn. Output lines flow through
+// spinner.log(), which lifts the status line, prints, and redraws it below,
+// so the thinking pulse is always the last thing on screen.
+const ICONS = ['✦', '✧', '✶', '✺', '✹', '✷']
+
 export function startSpinner(codename, display) {
-  if (!process.stdout.isTTY) return { stop() {} }
+  if (!process.stdout.isTTY) {
+    return { log: (line) => console.log(line), stop() {} }
+  }
   const startedAt = Date.now()
   let tick = 0
-  const render = () => {
+  let stopped = false
+  const line = () => {
     const seconds = Math.round((Date.now() - startedAt) / 1000)
-    const verb = seconds < 8 ? 'planning' : 'working'
-    const dots = ['', '.', '..', '…'][tick++ % 4]
-    process.stdout.write(
-      `\r${dim(`[${codename}] ${display} · ${verb}${dots}`)} ${faint(seconds + 's')}\x1b[K`,
-    )
+    const verb = seconds < 8 ? 'thinking' : 'working'
+    const dots = ['', '.', '..', '…'][tick % 4]
+    const [r, g, b] = rampColor((tick % 24) / 24)
+    const icon = truecolor ? `\x1b[38;2;${r};${g};${b}m${ICONS[tick % ICONS.length]}\x1b[39m` : violet(ICONS[tick % ICONS.length])
+    return `${icon} ${dim(`[${codename}] ${display} · ${verb}${dots}`)} ${faint(seconds + 's')}`
   }
-  render()
-  const timer = setInterval(render, 280)
+  const draw = () => process.stdout.write('\r' + line() + '\x1b[K')
+  const clear = () => process.stdout.write('\r\x1b[K')
+  draw()
+  const timer = setInterval(() => {
+    if (stopped) return
+    tick++
+    draw()
+  }, 120)
   timer.unref?.()
   return {
+    log(out) {
+      if (stopped) return console.log(out)
+      clear()
+      process.stdout.write(out + '\n')
+      draw()
+    },
     stop() {
+      stopped = true
       clearInterval(timer)
-      process.stdout.write('\r\x1b[K')
+      clear()
     },
   }
 }
