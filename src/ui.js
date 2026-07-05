@@ -39,13 +39,18 @@ export function stripAnsi(s) {
   return String(s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
 }
 
+function terminalColumns(fallback = 80) {
+  const value = Number(process.stdout.columns || process.env.COLUMNS || fallback)
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
 // Diff lines rendered as full-width bars: added/written code on an Akorith-green
 // background, removed code on an Akorith-purple background. The bar fills the
 // terminal width so runs of changes read as solid colored blocks, not grey text.
 function diffBar(sign, content, bg, fg, bg256) {
   const raw = `${sign} ${content}`
   if (!enabled) return raw
-  const width = Math.min(process.stdout.columns || 80, 120)
+  const width = Math.min(terminalColumns(), 120)
   const body = raw.length >= width ? raw.slice(0, width) : raw.padEnd(width)
   if (truecolor) {
     return `\x1b[48;2;${bg[0]};${bg[1]};${bg[2]}m\x1b[38;2;${fg[0]};${fg[1]};${fg[2]}m${body}\x1b[0m`
@@ -114,7 +119,7 @@ export function gradient(s) {
 // label (padding is computed from the plain text, so colored labels align).
 // `glyph` is the little left cap that opens the rule.
 export function rule(label = '', color = dim, glyph = '─') {
-  const width = Math.min(process.stdout.columns || 80, 100)
+  const width = Math.min(terminalColumns(), 100)
   if (!label) return faint('─'.repeat(width))
   const seg = ` ${label} `
   const pad = Math.max(width - seg.length - 2, 0)
@@ -143,7 +148,7 @@ function taglines(version) {
 }
 
 export function banner(version) {
-  const cols = process.stdout.columns || 80
+  const cols = terminalColumns()
   const mark = cols >= 58 ? wordmarkFrame(0) : violet(bold('AKORITH'))
   return mark + '\n\n' + taglines(version)
 }
@@ -151,7 +156,7 @@ export function banner(version) {
 // Startup animation: the wordmark's violet→sky→emerald ramp flows across the
 // letters for ~2s, then settles. Skipped when not a truecolor TTY.
 export async function animateBanner(version) {
-  const cols = process.stdout.columns || 80
+  const cols = terminalColumns()
   if (!process.stdout.isTTY || !truecolor || cols < 58) {
     console.log(banner(version))
     return

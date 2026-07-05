@@ -339,21 +339,15 @@ function createRenderer(providerId, print) {
     // fences, todos, and diffs into the same compact Akorith flow.
     let started = false
     const emit = createFlowLinePrinter(print, { suppressRuntimeBanner: true })
-    return {
-      stdoutLine(line) {
-        const plain = stripAnsi(line).trim()
-        if (!started) {
-          if (!plain || /^>\s*(build|run)\b/i.test(plain)) return
-          started = true
-        }
-        emit(line)
-      },
-      stderrLine(line) {
-        const plain = stripAnsi(line).trim()
-        if (plain) print(dim(plain))
-      },
-      flush() {},
+    const route = (line) => {
+      const plain = stripAnsi(line).trim()
+      if (!started) {
+        if (!plain || /^>\s*(build|run)\b/i.test(plain)) return
+        started = true
+      }
+      emit(line)
     }
+    return { stdoutLine: route, stderrLine: route, flush() {} }
   }
 
   // claude / ollama: answer arrives on stdout as-is (diff regions get colored)
@@ -372,6 +366,7 @@ function createRenderer(providerId, print) {
 
 function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
   let lastBlank = true
+  let suppressListingOutput = false
   const emitPlain = (line) => {
     const plain = stripAnsi(line).trim()
     if (!plain) {
@@ -392,19 +387,36 @@ function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
     if (/^```/.test(trimmed)) return
     if (/^\(no output\)$/i.test(trimmed)) return
 
+    if (suppressListingOutput) {
+      if (trimmed === 'done' || isListingHeaderLine(trimmed) || isListingOutputLine(trimmed)) return
+      suppressListingOutput = false
+    }
+
     if (/^>\s*/.test(trimmed)) {
       if (suppressRuntimeBanner && /^>\s*(build|run)\b/i.test(trimmed)) return
       return emitPlain(faint('  · ' + trimmed.replace(/^>\s*/, '')))
     }
 
     const shell = trimmed.match(/^\$\s+(.+)$/)
-    if (shell) return emitPlain(violet('  › ') + dim(compactCommand(shell[1])))
+    if (shell) {
+      suppressListingOutput = /\bls\s+-/.test(shell[1]) || /^ls(\s|$)/.test(shell[1])
+      return emitPlain(violet('  › ') + dim(compactCommand(shell[1])))
+    }
 
     const done = trimmed.match(/^Done\.?\s*(.*)$/i)
     if (done) return emitPlain(green('  ✓ ') + bright(done[1] || 'done'))
 
+    const arrow = trimmed.match(/^(?:[-–—]>|→|➜)\s+(.+)/)
+    if (arrow) return emitPlain(violet('  › ') + dim(arrow[1]))
+
+    const mdHeading = trimmed.match(/^#{1,3}\s+(.+)/)
+    if (mdHeading) return emitPlain(violet('  ' + bold(mdHeading[1].replace(/:$/, ''))))
+
     const checked = trimmed.match(/^\[(?:x|✓|✔)\]\s+(.+)/i)
     if (checked) return emitPlain(green('  ✓ ') + dim(checked[1]))
+
+    const active = trimmed.match(/^\[(?:•|\*|\.|…|-)\]\s+(.+)/)
+    if (active) return emitPlain(violet('  ◐ ') + dim(active[1]))
 
     const unchecked = trimmed.match(/^\[\s\]\s+(.+)/)
     if (unchecked) return emitPlain(faint('  ○ ' + unchecked[1]))
@@ -412,8 +424,76 @@ function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
     const heading = trimmed.match(/^\*\*(.+?)\*\*:?\s*$/)
     if (heading) return emitPlain(violet('  ' + bold(heading[1].replace(/:$/, ''))))
 
+    const bullet = trimmed.match(/^[-*]\s+(.+)/)
+    if (bullet) return emitWrappedBullet(bullet[1], emitPlain)
+
+    if (isPlainAnalysisLine(trimmed)) return emitWrappedParagraph(trimmed, emitPlain)
+
     emitDiffAware(line)
   }
+}
+
+function terminalWidth() {
+  const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
+  return Math.max(52, Math.min(Number.isFinite(columns) ? columns : 88, 110))
+}
+
+function emitWrappedParagraph(line, emit) {
+  const text = cleanMarkdownText(line)
+  for (const part of wrapText(text, terminalWidth())) emit(bright(part))
+}
+
+function emitWrappedBullet(line, emit) {
+  const parts = wrapText(cleanMarkdownText(line), terminalWidth() - 4)
+  parts.forEach((part, i) => {
+    const prefix = i === 0 ? violet('  • ') : faint('    ')
+    emit(prefix + dim(part))
+  })
+}
+
+function wrapText(text, width) {
+  const words = text.replace(/\s+/g, ' ').trim().split(' ')
+  const lines = []
+  let line = ''
+  for (const word of words) {
+    if (!line) {
+      line = word
+    } else if (stripAnsi(line).length + 1 + word.length <= width) {
+      line += ' ' + word
+    } else {
+      lines.push(line)
+      line = word
+    }
+  }
+  if (line) lines.push(line)
+  return lines.length ? lines : ['']
+}
+
+function cleanMarkdownText(line) {
+  return line
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\s+([,.;:])/g, '$1')
+}
+
+function isPlainAnalysisLine(line) {
+  return (
+    line.length > terminalWidth() - 12 ||
+    /\*\*|`[^`]+`/.test(line) ||
+    /[.!?:]\s*$/.test(line)
+  )
+}
+
+function isListingHeaderLine(line) {
+  return /^===\s+.+\s+===$/.test(line)
+}
+
+function isListingOutputLine(line) {
+  return (
+    /^total\s+\d+/.test(line) ||
+    /^[bcdlps-][rwx-]{9}[@+ ]?\s+\d+\s+/.test(line) ||
+    /^\d+\s+/.test(line)
+  )
 }
 
 function compactCommand(command) {

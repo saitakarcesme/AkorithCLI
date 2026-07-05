@@ -12,6 +12,25 @@ import { animateBanner, rule, bold, dim, faint, text, violet, green, red, yellow
 const CONFIG_DIR = path.join(os.homedir(), '.akorith')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'cli.json')
 
+function terminalColumns() {
+  const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
+  return Math.max(44, Math.min(Number.isFinite(columns) ? columns : 88, 120))
+}
+
+function elideMiddle(value, max) {
+  if (value.length <= max) return value
+  if (max <= 8) return value.slice(0, max)
+  const head = Math.ceil((max - 1) * 0.45)
+  const tail = Math.floor((max - 1) * 0.55)
+  return `${value.slice(0, head)}…${value.slice(-tail)}`
+}
+
+function compactConnections(labels) {
+  const joined = labels.join(' · ')
+  if (joined.length <= terminalColumns() - 18) return joined
+  return `${labels[0]} +${labels.length - 1}`
+}
+
 function loadConfig() {
   try {
     return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
@@ -63,7 +82,7 @@ export async function startRepl({ version, initialModel }) {
   console.log()
   printStatus()
   printConnections()
-  console.log(dim('Type a task. /help for commands, /connect for integrations, ! to run shell.'))
+  printHint()
   console.log()
 
   const rl = readline.createInterface({
@@ -90,10 +109,18 @@ export async function startRepl({ version, initialModel }) {
     const on = Object.entries(status).filter(([, c]) => c.on).map(([, c]) => c.label)
     const off = Object.entries(status).filter(([, c]) => !c.on && c.ready).map(([, c]) => c.label)
     const parts = []
-    if (on.length) parts.push(green('⚡ ' + on.join(' · ')))
+    if (on.length) parts.push(green('⚡ ' + compactConnections(on)))
     if (off.length) parts.push(faint('○ ' + off.join(' · ')))
     if (!on.length && !off.length) return
     console.log(faint('connected  ') + parts.join(faint('   ')))
+  }
+
+  function printHint() {
+    const hint =
+      terminalColumns() < 72
+        ? 'Type a task. /help for commands.'
+        : 'Type a task. /help for commands, /connect for integrations, ! to run shell.'
+    console.log(dim(hint))
   }
 
   function connectMenu() {
@@ -112,11 +139,21 @@ export async function startRepl({ version, initialModel }) {
   }
 
   function printStatus() {
+    const narrow = terminalColumns() < 72
+    const model = narrow
+      ? `${selection.provider}/${selection.model || 'default'}`
+      : formatModel(selection)
+    const cwd = process.cwd().replace(os.homedir(), '~')
+    const state = narrow
+      ? started[selection.provider] ? 'cont' : 'new'
+      : started[selection.provider] ? 'session continues' : 'new session'
+    const fixed = model.length + mode.length + state.length + 14
+    const cwdBudget = Math.max(12, terminalColumns() - fixed)
     const parts = [
-      green('●') + ' ' + dim(formatModel(selection)),
+      green('●') + ' ' + dim(model),
       mode === 'act' ? green('act') : yellow('view'),
-      faint(process.cwd().replace(os.homedir(), '~')),
-      started[selection.provider] ? faint('session continues') : faint('new session'),
+      faint(elideMiddle(cwd, cwdBudget)),
+      faint(state),
     ]
     console.log(parts.join(faint('  ·  ')))
   }
