@@ -92,12 +92,15 @@ export function gradient(s) {
   )
 }
 
-export function rule(label = '') {
+// A horizontal rule with an optional plain-text label. `color` styles just the
+// label (padding is computed from the plain text, so colored labels align).
+// `glyph` is the little left cap that opens the rule.
+export function rule(label = '', color = dim, glyph = '─') {
   const width = Math.min(process.stdout.columns || 80, 100)
   if (!label) return faint('─'.repeat(width))
-  const label_ = ` ${label} `
-  const pad = Math.max(width - label_.length - 2, 0)
-  return faint('──') + dim(label_) + faint('─'.repeat(pad))
+  const seg = ` ${label} `
+  const pad = Math.max(width - seg.length - 2, 0)
+  return faint(glyph + '─') + color(seg) + faint('─'.repeat(pad))
 }
 
 const WORDMARK = [
@@ -159,7 +162,32 @@ export function resetCursor() {
 // Live status line — stays up for the WHOLE turn. Output lines flow through
 // spinner.log(), which lifts the status line, prints, and redraws it below,
 // so the thinking pulse is always the last thing on screen.
-const ICONS = ['✦', '✧', '✶', '✺', '✹', '✷']
+// Smooth braille spinner for the leading glyph.
+const BRAILLE = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+// A trailing run of dots that fills and empties, so it breathes rather than
+// just cycling one dot at a time.
+const DOTS = ['   ', '·  ', '·· ', '···', ' ··', '  ·']
+
+// "akoriting" with a highlight that sweeps across the word — a shimmer, brand
+// ramp on the lit letter, bright white just ahead/behind, dim elsewhere.
+function shimmer(word, tick) {
+  const chars = [...word]
+  if (!truecolor) {
+    // 16/256-color fallback: pulse the whole word between violet and dim.
+    return tick % 2 === 0 ? violet(word) : dim(word)
+  }
+  const span = chars.length + 3 // gap so the sweep has a rest between passes
+  const head = tick % span
+  const [hr, hg, hb] = rampColor((tick % 24) / 24)
+  return chars
+    .map((c, i) => {
+      const d = head - i
+      if (d === 0) return `\x1b[1m\x1b[38;2;${hr};${hg};${hb}m${c}\x1b[22m\x1b[39m`
+      if (d === 1 || d === -1) return `\x1b[38;2;220;221;224m${c}\x1b[39m` // bright trail
+      return `\x1b[38;2;120;121;128m${c}\x1b[39m` // dim base
+    })
+    .join('')
+}
 
 export function startSpinner(codename, display) {
   if (!process.stdout.isTTY) {
@@ -170,11 +198,11 @@ export function startSpinner(codename, display) {
   let stopped = false
   const line = () => {
     const seconds = Math.round((Date.now() - startedAt) / 1000)
-    const verb = seconds < 8 ? 'thinking' : 'working'
-    const dots = ['', '.', '..', '…'][tick % 4]
-    const [r, g, b] = rampColor((tick % 24) / 24)
-    const icon = truecolor ? `\x1b[38;2;${r};${g};${b}m${ICONS[tick % ICONS.length]}\x1b[39m` : violet(ICONS[tick % ICONS.length])
-    return `${icon} ${dim(`[${codename}] ${display} · ${verb}${dots}`)} ${faint(seconds + 's')}`
+    const [r, g, b] = rampColor((tick % 20) / 20)
+    const glyph = `\x1b[38;2;${r};${g};${b}m${BRAILLE[tick % BRAILLE.length]}\x1b[39m`
+    const dots = dim(DOTS[tick % DOTS.length])
+    // e.g.  ⠹ akoriting···   atlantis · 5s
+    return `${glyph} ${shimmer('akoriting', tick)}${dots}   ${faint(`${codename} · ${seconds}s`)}`
   }
   const draw = () => process.stdout.write('\r' + line() + '\x1b[K')
   const clear = () => process.stdout.write('\r\x1b[K')
@@ -183,7 +211,7 @@ export function startSpinner(codename, display) {
     if (stopped) return
     tick++
     draw()
-  }, 120)
+  }, 110)
   timer.unref?.()
   return {
     log(out) {

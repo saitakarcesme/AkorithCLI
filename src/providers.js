@@ -4,7 +4,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { startSpinner, stripAnsi, text as bright, dim, faint, green, red, italic } from './ui.js'
+import { startSpinner, stripAnsi, text as bright, dim, faint, green, red, violet, italic } from './ui.js'
 
 export const PROVIDERS = {
   claude: {
@@ -270,18 +270,18 @@ function createRenderer(providerId, print) {
         if (plain === 'apply patch') return void ((block = 'patch'), (patchOk = null))
         if (plain === 'tokens used') return void (block = 'tokens')
         if (block === 'say') say(line)
-        else if (block === 'think' && plain) print(faint(italic(plain)))
+        else if (block === 'think' && plain) print('  ' + faint(italic(plain)))
         else if (block === 'exec') {
           if (execHeader) {
             execHeader = false
             const m = plain.match(/-l?c '([\s\S]+)' in /)
             const cmd = m ? m[1] : plain.replace(/ in \/.*$/, '')
-            print(faint('● ') + dim(cmd))
+            print(violet('  › ') + dim(cmd))
             lastBlank = false
           } else if (/succeeded in \S+:?\s*$/.test(plain)) {
-            print(green('  ✓ ') + faint(plain.trim().replace(/:$/, '')))
+            print(green('    ✓ ') + faint(plain.trim().replace(/:$/, '')))
           } else if (/(failed|exited \d+) in \S+:?\s*$/.test(plain)) {
-            print(red('  ✗ ') + faint(plain.trim().replace(/:$/, '')))
+            print(red('    ✗ ') + faint(plain.trim().replace(/:$/, '')))
           }
           // command output itself stays quiet — codex narrates what matters
         } else if (block === 'patch') {
@@ -290,13 +290,13 @@ function createRenderer(providerId, print) {
           } else if (patchOk !== null && plain && !isDiffLine(plain)) {
             const file = plain.split('/').pop()
             const mark = patchOk ? green(' ✓') : red(' ✗')
-            print(faint('● ') + dim('apply patch ' + file) + mark)
+            print(violet('  › ') + dim('edit ' + file) + mark)
             lastBlank = false
             patchOk = null
           }
           // diff bodies stay quiet
         } else if (block === 'tokens' && plain) {
-          print(faint('tokens ' + plain.trim()))
+          print(faint('  · ' + plain.trim() + ' tokens'))
           block = 'suppress'
         }
       },

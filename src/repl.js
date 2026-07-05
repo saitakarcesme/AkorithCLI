@@ -273,8 +273,11 @@ export async function startRepl({ version, initialModel }) {
       return
     }
 
-    // A real prompt — hand it to the active provider, streaming.
-    console.log(rule(formatModel(selection)))
+    // A real prompt — hand it to the active provider, streaming. The turn is
+    // framed by a labeled top rule and a single closing rule that carries the
+    // outcome, so the model's output sits cleanly between two thin dividers.
+    console.log()
+    console.log(rule(`${formatModel(selection)} · ${mode}`, violet, '╭'))
     const startedAt = Date.now()
     const code = await runTurn(
       { selection, prompt: input, resume: started[selection.provider], cwd: process.cwd(), mode },
@@ -284,13 +287,13 @@ export async function startRepl({ version, initialModel }) {
     const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
     if (code === 0) {
       started[selection.provider] = true
-      console.log(green(`✓ done in ${seconds}s`))
+      console.log(rule(`✓ done · ${seconds}s`, green, '╰'))
     } else if (code === 130) {
-      console.log(yellow('■ cancelled'))
+      console.log(rule('■ cancelled', yellow, '╰'))
     } else {
-      console.log(red(`✗ exited with code ${code}`))
+      console.log(rule(`✗ exited · code ${code}`, red, '╰'))
     }
-    console.log(rule())
+    console.log()
     printStatus()
   }
 
