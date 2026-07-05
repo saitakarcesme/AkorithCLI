@@ -39,6 +39,24 @@ export function stripAnsi(s) {
   return String(s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
 }
 
+// Diff lines rendered as full-width bars: added/written code on an Akorith-green
+// background, removed code on an Akorith-purple background. The bar fills the
+// terminal width so runs of changes read as solid colored blocks, not grey text.
+function diffBar(sign, content, bg, fg, bg256) {
+  const raw = `${sign} ${content}`
+  if (!enabled) return raw
+  const width = Math.min(process.stdout.columns || 80, 120)
+  const body = raw.length >= width ? raw.slice(0, width) : raw.padEnd(width)
+  if (truecolor) {
+    return `\x1b[48;2;${bg[0]};${bg[1]};${bg[2]}m\x1b[38;2;${fg[0]};${fg[1]};${fg[2]}m${body}\x1b[0m`
+  }
+  return `\x1b[48;5;${bg256}m\x1b[38;5;255m${body}\x1b[0m`
+}
+// deep green bg, bright mint text
+export const diffAdd = (content) => diffBar('+', content, [18, 54, 38], [178, 240, 204], 22)
+// deep purple bg, bright lilac text
+export const diffDel = (content) => diffBar('-', content, [42, 28, 74], [206, 190, 250], 54)
+
 // The brand ramp the /cli hero uses: violet → sky → emerald.
 const RAMP = [
   [0xa7, 0x8b, 0xfa],

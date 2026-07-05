@@ -4,7 +4,9 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { startSpinner, stripAnsi, text as bright, dim, faint, green, red, violet, italic } from './ui.js'
+import {
+  startSpinner, stripAnsi, text as bright, dim, faint, green, red, violet, italic, diffAdd, diffDel,
+} from './ui.js'
 
 export const PROVIDERS = {
   claude: {
@@ -233,9 +235,22 @@ function createRenderer(providerId, print) {
     let spokeFromLog = false
     let lastBlank = true
     const finalAnswer = []
+    const shownDiff = new Set() // codex reprints the cumulative diff; show each line once
+    const isDiffMeta = (plain) => /^(diff --git |index [0-9a-f]|new file mode |deleted file mode |--- |\+\+\+ )/.test(plain)
     const isDiffLine = (plain) =>
-      /^(diff --git |index [0-9a-f]|new file mode |deleted file mode |--- |\+\+\+ |@@ )/.test(plain) ||
-      (inDiff && /^[+\- ]/.test(plain))
+      isDiffMeta(plain) || /^@@ /.test(plain) || (inDiff && /^[+\- ]/.test(plain))
+    // Render a diff line: '+' → green bar, '-' → purple bar, ' '/@@ → context.
+    // Deduped so codex's repeated cumulative diffs don't stack up.
+    const emitDiff = (plain) => {
+      if (isDiffMeta(plain)) return
+      if (shownDiff.has(plain)) return
+      shownDiff.add(plain)
+      if (/^@@ /.test(plain)) return void print(faint('  ' + plain))
+      if (/^\+/.test(plain)) return void print(diffAdd(plain.slice(1)))
+      if (/^-/.test(plain)) return void print(diffDel(plain.slice(1)))
+      print(faint('  ' + plain.replace(/^ /, '')))
+      lastBlank = false
+    }
     const say = (line) => {
       const plain = stripAnsi(line).trimEnd()
       if (!plain) {
@@ -244,9 +259,11 @@ function createRenderer(providerId, print) {
         lastBlank = true
         return
       }
-      // codex re-prints the cumulative diff after events — never show raw diffs
+      // Show the code changes with colored backgrounds (deduped).
       if (isDiffLine(plain)) {
         inDiff = true
+        lastBlank = false
+        emitDiff(plain)
         return
       }
       lastBlank = false
@@ -287,14 +304,18 @@ function createRenderer(providerId, print) {
         } else if (block === 'patch') {
           if (/^patch: /.test(plain)) {
             patchOk = /^patch: (completed|applied|success)/.test(plain)
-          } else if (patchOk !== null && plain && !isDiffLine(plain)) {
+          } else if (/^(diff --git|index [0-9a-f]|new file|deleted file|--- |\+\+\+ |@@ |[+\- ])/.test(plain)) {
+            // the actual code change — render it as green/purple diff bars
+            inDiff = true
+            emitDiff(plain)
+          } else if (patchOk !== null && plain) {
+            // the patched file's path line (before the diff body)
             const file = plain.split('/').pop()
             const mark = patchOk ? green(' ✓') : red(' ✗')
             print(violet('  › ') + dim('edit ' + file) + mark)
             lastBlank = false
             patchOk = null
           }
-          // diff bodies stay quiet
         } else if (block === 'tokens' && plain) {
           print(faint('  · ' + plain.trim() + ' tokens'))
           block = 'suppress'
@@ -312,6 +333,7 @@ function createRenderer(providerId, print) {
   if (providerId === 'opencode') {
     // drop the leading blanks and the "> build · model" banner, keep the rest
     let started = false
+    const emit = diffAwareLine(print)
     return {
       stdoutLine(line) {
         const plain = stripAnsi(line).trim()
@@ -319,7 +341,7 @@ function createRenderer(providerId, print) {
           if (!plain || plain.startsWith('>')) return
           started = true
         }
-        print(line)
+        emit(line)
       },
       stderrLine(line) {
         const plain = stripAnsi(line).trim()
@@ -329,16 +351,43 @@ function createRenderer(providerId, print) {
     }
   }
 
-  // claude / ollama: answer arrives on stdout as-is
+  // claude / ollama: answer arrives on stdout as-is (diff regions get colored)
+  const emit = diffAwareLine(print)
   return {
     stdoutLine(line) {
-      print(line)
+      emit(line)
     },
     stderrLine(line) {
       const plain = stripAnsi(line).trim()
       if (plain) print(dim(plain))
     },
     flush() {},
+  }
+}
+
+// Print raw provider output, but colorize unified-diff regions: once a real
+// diff header (`diff --git` / `@@ -x +y @@`) is seen, '+' lines get an
+// Akorith-green background and '-' lines an Akorith-purple background until a
+// blank/non-diff line. Guarded by the header so ordinary markdown ("- item")
+// is never touched.
+function diffAwareLine(print) {
+  let inRegion = false
+  return (line) => {
+    const t = stripAnsi(line).replace(/\s+$/, '')
+    if (/^diff --git /.test(t) || /^@@ -\d+.*@@/.test(t)) inRegion = true
+    if (inRegion) {
+      if (/^(diff --git|index [0-9a-f]|new file|deleted file|--- |\+\+\+ )/.test(t)) return
+      if (/^@@ /.test(t)) return void print(faint('  ' + t))
+      if (/^\+/.test(t)) return void print(diffAdd(t.slice(1)))
+      if (/^-/.test(t)) return void print(diffDel(t.slice(1)))
+      if (t === '') {
+        inRegion = false
+        return void print('')
+      }
+      if (/^ /.test(t)) return void print(faint('  ' + t.replace(/^ /, '')))
+      inRegion = false // anything else ends the diff region
+    }
+    print(line)
   }
 }
 
