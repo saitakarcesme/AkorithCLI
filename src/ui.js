@@ -53,9 +53,9 @@ function diffBar(sign, content, bg, fg, bg256) {
   return `\x1b[48;5;${bg256}m\x1b[38;5;255m${body}\x1b[0m`
 }
 // deep green bg, bright mint text
-export const diffAdd = (content) => diffBar('+', content, [18, 54, 38], [178, 240, 204], 22)
-// deep purple bg, bright lilac text
-export const diffDel = (content) => diffBar('-', content, [42, 28, 74], [206, 190, 250], 54)
+export const diffAdd = (content) => diffBar('+', content, [12, 72, 50], [191, 246, 213], 22)
+// removed code is intentionally purple, not red; red is reserved for errors.
+export const diffDel = (content) => diffBar('-', content, [58, 34, 110], [233, 213, 255], 54)
 
 // The brand ramp the /cli hero uses: violet → sky → emerald.
 const RAMP = [

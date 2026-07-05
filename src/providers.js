@@ -5,7 +5,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import {
-  startSpinner, stripAnsi, text as bright, dim, faint, green, red, violet, italic, diffAdd, diffDel,
+  startSpinner, stripAnsi, text as bright, dim, faint, green, red, violet, bold, diffAdd, diffDel,
 } from './ui.js'
 
 export const PROVIDERS = {
@@ -234,6 +234,7 @@ function createRenderer(providerId, print) {
     let inDiff = false
     let spokeFromLog = false
     let lastBlank = true
+    const flow = createFlowLinePrinter(print)
     const finalAnswer = []
     const shownDiff = new Set() // codex reprints the cumulative diff; show each line once
     const isDiffMeta = (plain) => /^(diff --git |index [0-9a-f]|new file mode |deleted file mode |--- |\+\+\+ )/.test(plain)
@@ -267,7 +268,7 @@ function createRenderer(providerId, print) {
         return
       }
       lastBlank = false
-      print(bright(plain))
+      flow(line)
       spokeFromLog = true
     }
     return {
@@ -287,13 +288,16 @@ function createRenderer(providerId, print) {
         if (plain === 'apply patch') return void ((block = 'patch'), (patchOk = null))
         if (plain === 'tokens used') return void (block = 'tokens')
         if (block === 'say') say(line)
-        else if (block === 'think' && plain) print('  ' + faint(italic(plain)))
+        else if (block === 'think') {
+          // Keep the live spinner as the thinking indicator; the internal
+          // reasoning stream is too noisy for the Akorith transcript.
+        }
         else if (block === 'exec') {
           if (execHeader) {
             execHeader = false
             const m = plain.match(/-l?c '([\s\S]+)' in /)
             const cmd = m ? m[1] : plain.replace(/ in \/.*$/, '')
-            print(violet('  › ') + dim(cmd))
+            print(violet('  › ') + dim(compactCommand(cmd)))
             lastBlank = false
           } else if (/succeeded in \S+:?\s*$/.test(plain)) {
             print(green('    ✓ ') + faint(plain.trim().replace(/:$/, '')))
@@ -317,28 +321,29 @@ function createRenderer(providerId, print) {
             patchOk = null
           }
         } else if (block === 'tokens' && plain) {
-          print(faint('  · ' + plain.trim() + ' tokens'))
+          // Token accounting is useful for logs, but noisy in the live terminal.
           block = 'suppress'
         }
       },
       flush() {
         // stderr log went missing (future codex versions?) — fall back to stdout
         if (!spokeFromLog && finalAnswer.some((l) => stripAnsi(l).trim())) {
-          for (const line of finalAnswer) print(line)
+          for (const line of finalAnswer) flow(line)
         }
       },
     }
   }
 
   if (providerId === 'opencode') {
-    // drop the leading blanks and the "> build · model" banner, keep the rest
+    // Drop runtime boilerplate, then normalize shell transcripts, markdown
+    // fences, todos, and diffs into the same compact Akorith flow.
     let started = false
-    const emit = diffAwareLine(print)
+    const emit = createFlowLinePrinter(print, { suppressRuntimeBanner: true })
     return {
       stdoutLine(line) {
         const plain = stripAnsi(line).trim()
         if (!started) {
-          if (!plain || plain.startsWith('>')) return
+          if (!plain || /^>\s*(build|run)\b/i.test(plain)) return
           started = true
         }
         emit(line)
@@ -352,7 +357,7 @@ function createRenderer(providerId, print) {
   }
 
   // claude / ollama: answer arrives on stdout as-is (diff regions get colored)
-  const emit = diffAwareLine(print)
+  const emit = createFlowLinePrinter(print)
   return {
     stdoutLine(line) {
       emit(line)
@@ -363,6 +368,58 @@ function createRenderer(providerId, print) {
     },
     flush() {},
   }
+}
+
+function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
+  let lastBlank = true
+  const emitPlain = (line) => {
+    const plain = stripAnsi(line).trim()
+    if (!plain) {
+      if (!lastBlank) print('')
+      lastBlank = true
+      return
+    }
+    print(line)
+    lastBlank = false
+  }
+  const emitDiffAware = diffAwareLine(emitPlain)
+
+  return (line) => {
+    const plain = stripAnsi(line).trimEnd()
+    const trimmed = plain.trim()
+
+    if (!trimmed) return emitPlain('')
+    if (/^```/.test(trimmed)) return
+    if (/^\(no output\)$/i.test(trimmed)) return
+
+    if (/^>\s*/.test(trimmed)) {
+      if (suppressRuntimeBanner && /^>\s*(build|run)\b/i.test(trimmed)) return
+      return emitPlain(faint('  · ' + trimmed.replace(/^>\s*/, '')))
+    }
+
+    const shell = trimmed.match(/^\$\s+(.+)$/)
+    if (shell) return emitPlain(violet('  › ') + dim(compactCommand(shell[1])))
+
+    const done = trimmed.match(/^Done\.?\s*(.*)$/i)
+    if (done) return emitPlain(green('  ✓ ') + bright(done[1] || 'done'))
+
+    const checked = trimmed.match(/^\[(?:x|✓|✔)\]\s+(.+)/i)
+    if (checked) return emitPlain(green('  ✓ ') + dim(checked[1]))
+
+    const unchecked = trimmed.match(/^\[\s\]\s+(.+)/)
+    if (unchecked) return emitPlain(faint('  ○ ' + unchecked[1]))
+
+    const heading = trimmed.match(/^\*\*(.+?)\*\*:?\s*$/)
+    if (heading) return emitPlain(violet('  ' + bold(heading[1].replace(/:$/, ''))))
+
+    emitDiffAware(line)
+  }
+}
+
+function compactCommand(command) {
+  const oneLine = command.replace(/\s+/g, ' ').trim()
+  if (oneLine.length <= 110) return oneLine
+  return `${oneLine.slice(0, 78)} ... ${oneLine.slice(-26)}`
 }
 
 // Print raw provider output, but colorize unified-diff regions: once a real
