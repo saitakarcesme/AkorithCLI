@@ -3,7 +3,10 @@ import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { PROVIDERS, MODES, detectProviders, parseModelSpec, formatModel, runTurn } from './providers.js'
+import {
+  PROVIDERS, MODES, CONNECTIONS, detectProviders, parseModelSpec, formatModel, runTurn,
+  connectionStatus, loadConnections, saveConnections,
+} from './providers.js'
 import { animateBanner, rule, bold, dim, faint, text, violet, green, red, yellow, tintCursor, resetCursor } from './ui.js'
 
 const CONFIG_DIR = path.join(os.homedir(), '.akorith')
@@ -26,7 +29,7 @@ function saveConfig(config) {
   }
 }
 
-const COMMANDS = ['/help', '/models', '/model', '/mode', '/new', '/clear', '/exit', '/quit']
+const COMMANDS = ['/help', '/models', '/model', '/mode', '/connect', '/new', '/clear', '/exit', '/quit']
 
 export async function startRepl({ version, initialModel }) {
   const config = loadConfig()
@@ -59,7 +62,8 @@ export async function startRepl({ version, initialModel }) {
   await animateBanner(version)
   console.log()
   printStatus()
-  console.log(dim('Type a task. /help for commands, /model to switch models, ! to run shell.'))
+  printConnections()
+  console.log(dim('Type a task. /help for commands, /connect for integrations, ! to run shell.'))
   console.log()
 
   const rl = readline.createInterface({
@@ -80,6 +84,32 @@ export async function startRepl({ version, initialModel }) {
       return [[], line]
     },
   })
+
+  function printConnections() {
+    const status = connectionStatus()
+    const on = Object.entries(status).filter(([, c]) => c.on).map(([, c]) => c.label)
+    const off = Object.entries(status).filter(([, c]) => !c.on && c.ready).map(([, c]) => c.label)
+    const parts = []
+    if (on.length) parts.push(green('⚡ ' + on.join(' · ')))
+    if (off.length) parts.push(faint('○ ' + off.join(' · ')))
+    if (!on.length && !off.length) return
+    console.log(faint('connected  ') + parts.join(faint('   ')))
+  }
+
+  function connectMenu() {
+    const status = connectionStatus()
+    console.log()
+    console.log(text(bold('Connections')) + dim(' — external tools models can drive in act mode'))
+    for (const [id, c] of Object.entries(status)) {
+      const dot = !c.ready ? red('✗') : c.on ? green('⚡') : faint('○')
+      const state = !c.ready ? red('unavailable') : c.on ? green('on') : faint('off')
+      console.log(`  ${dot} ${text(bold(c.label.padEnd(8)))} ${state.padEnd(11)} ${faint(c.detail)}`)
+      console.log(`      ${faint(c.note)}`)
+    }
+    console.log()
+    console.log(faint('  /connect <name> on|off   toggle a connection (e.g. /connect github off)'))
+    console.log()
+  }
 
   function printStatus() {
     const parts = [
@@ -109,6 +139,7 @@ export async function startRepl({ version, initialModel }) {
     console.log(`  ${violet('/model <spec>')}   switch model — e.g. /model claude/sonnet, /model codex`)
     console.log(`  ${violet('/models')}         list providers and how to address their models`)
     console.log(`  ${violet('/mode <m>')}       view (read-only) or act (can edit files) — default act`)
+    console.log(`  ${violet('/connect')}        show & toggle GitHub, git, npm integrations`)
     console.log(`  ${violet('/new')}            start fresh conversations (all providers)`)
     console.log(`  ${violet('/clear')}          clear the screen`)
     console.log(`  ${violet('/exit')}           leave Akorith`)
@@ -139,6 +170,33 @@ export async function startRepl({ version, initialModel }) {
     }
     if (input === '/models') {
       listModels()
+      return
+    }
+    if (input === '/connect' || input.startsWith('/connect ')) {
+      const rest = input.slice(8).trim()
+      if (!rest) {
+        connectMenu()
+        return
+      }
+      const [name, verb] = rest.split(/\s+/)
+      if (!CONNECTIONS[name]) {
+        console.log(red('Unknown connection. ') + dim('Use: ' + Object.keys(CONNECTIONS).join(', ')))
+        return
+      }
+      if (verb !== 'on' && verb !== 'off') {
+        console.log(dim('Usage: /connect ' + name + ' on|off'))
+        return
+      }
+      const probe = connectionStatus()[name]
+      if (verb === 'on' && !probe.ready) {
+        console.log(red(`${CONNECTIONS[name].label} isn't available — `) + faint(probe.note))
+        return
+      }
+      const chosen = loadConnections() || {}
+      chosen[name] = verb === 'on'
+      saveConnections(chosen)
+      console.log(green('✓ ') + CONNECTIONS[name].label + ' ' + bold(verb) +
+        faint(verb === 'on' ? ' — models can use it in act mode' : ' — off'))
       return
     }
     if (input === '/mode' || input.startsWith('/mode ')) {

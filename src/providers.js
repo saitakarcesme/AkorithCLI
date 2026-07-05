@@ -3,6 +3,7 @@
 // Atlantis = Claude, Olympus = Codex, Gaia = OpenCode.
 
 import { spawn, spawnSync } from 'node:child_process'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { startSpinner, stripAnsi, text as bright, dim, faint, green, red, italic } from './ui.js'
 
 export const PROVIDERS = {
@@ -18,6 +19,12 @@ export const PROVIDERS = {
       if (resume) args.push('-c')
       // plan mode is Claude Code's read-only session; acceptEdits lets it act
       args.push('--permission-mode', mode === 'act' ? 'acceptEdits' : 'plan')
+      // In act mode, pre-approve the connected tools so "push this" runs
+      // without a human at the approval prompt (headless -p can't answer one).
+      if (mode === 'act') {
+        const tools = allowedTools()
+        if (tools.length) args.push('--allowedTools', ...tools)
+      }
       return args
     },
   },
@@ -34,6 +41,11 @@ export const PROVIDERS = {
       // `resume` doesn't take -s, but both forms accept -c overrides
       const sandbox = mode === 'act' ? 'workspace-write' : 'read-only'
       args.push('-c', `sandbox_mode="${sandbox}"`)
+      // Codex's workspace-write sandbox blocks the network by default, so
+      // git push / gh / npm publish fail. Open it when a connection is on.
+      if (mode === 'act' && connectionsOn()) {
+        args.push('-c', 'sandbox_workspace_write.network_access=true')
+      }
       return args
     },
   },
@@ -63,6 +75,115 @@ export const PROVIDERS = {
       return ['run', model || 'llama3.2', prompt]
     },
   },
+}
+
+// Connections: the external tools Akorith lets models drive in act mode.
+// Each entry probes whether it's usable (installed + authenticated) and, when
+// on, contributes pre-approved command patterns so a headless turn like
+// "push this commit" runs end to end without a human approving each step.
+export const CONNECTIONS = {
+  git: {
+    label: 'Git',
+    detail: 'commit, branch, push, pull in the current repo',
+    // Claude's tool-permission patterns; Codex uses its own network flag.
+    claudeTools: ['Bash(git:*)'],
+    needsNetwork: true,
+    check() {
+      const has = which('git')
+      if (!has) return { ready: false, note: 'git not installed' }
+      const name = run('git', ['config', 'user.name'])
+      return {
+        ready: true,
+        note: name ? `as ${name}` : 'no user.name set — commits may be rejected',
+      }
+    },
+  },
+  github: {
+    label: 'GitHub',
+    detail: 'PRs, issues, releases, repo create/clone via gh',
+    claudeTools: ['Bash(gh:*)'],
+    needsNetwork: true,
+    check() {
+      if (!which('gh')) return { ready: false, note: 'gh CLI not installed' }
+      const status = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' })
+      const ok = status.status === 0
+      const acct = (status.stdout + status.stderr).match(/account (\S+)/)
+      return {
+        ready: ok,
+        note: ok ? `signed in${acct ? ' as ' + acct[1] : ''}` : 'run: gh auth login',
+      }
+    },
+  },
+  npm: {
+    label: 'npm',
+    detail: 'install, run scripts, publish packages',
+    claudeTools: ['Bash(npm:*)', 'Bash(npx:*)'],
+    needsNetwork: true,
+    check() {
+      if (!which('npm')) return { ready: false, note: 'npm not installed' }
+      const who = run('npm', ['whoami'])
+      return { ready: true, note: who ? `logged in as ${who}` : 'installed (not logged in — publish needs npm login)' }
+    },
+  },
+}
+
+function which(bin) {
+  return spawnSync(process.platform === 'win32' ? 'where' : 'which', [bin], { encoding: 'utf8' }).status === 0
+}
+function run(bin, args) {
+  const r = spawnSync(bin, args, { encoding: 'utf8' })
+  return r.status === 0 ? r.stdout.trim() : ''
+}
+
+const CONN_FILE = pathJoinHome('.akorith', 'connections.json')
+function pathJoinHome(...parts) {
+  return [homedir(), ...parts].join('/')
+}
+function homedir() {
+  return process.env.HOME || process.env.USERPROFILE || '.'
+}
+
+// Which connections the user has switched on (default: all detected-ready).
+export function loadConnections() {
+  try {
+    return JSON.parse(readFileSync(CONN_FILE, 'utf8'))
+  } catch {
+    return null // null = "not chosen yet" → treated as all-on for ready ones
+  }
+}
+export function saveConnections(state) {
+  try {
+    mkdirSync(pathJoinHome('.akorith'), { recursive: true })
+    writeFileSync(CONN_FILE, JSON.stringify(state, null, 2) + '\n')
+  } catch {
+    // best-effort
+  }
+}
+
+// Snapshot for display and for arg-building: each connection with ready/on.
+export function connectionStatus() {
+  const chosen = loadConnections()
+  const out = {}
+  for (const [id, conn] of Object.entries(CONNECTIONS)) {
+    const probe = conn.check()
+    const on = chosen ? chosen[id] !== false : probe.ready
+    out[id] = { ...conn, ...probe, on: on && probe.ready }
+  }
+  return out
+}
+
+export function connectionsOn() {
+  return Object.values(connectionStatus()).some((c) => c.on && c.needsNetwork)
+}
+
+// Claude allowed-tool patterns for every connection currently on.
+export function allowedTools() {
+  const status = connectionStatus()
+  const tools = []
+  for (const [id, conn] of Object.entries(CONNECTIONS)) {
+    if (status[id].on) tools.push(...conn.claudeTools)
+  }
+  return tools
 }
 
 export function detectProviders() {
