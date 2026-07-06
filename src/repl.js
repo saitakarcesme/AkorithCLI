@@ -1,5 +1,5 @@
 import * as readline from 'node:readline'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
@@ -12,30 +12,18 @@ import { animateBanner, rule, bold, dim, faint, text, violet, green, red, yellow
 const CONFIG_DIR = path.join(os.homedir(), '.akorith')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'cli.json')
 
-const MODEL_PRESETS = [
-  { label: 'Olympus · default', spec: 'codex', detail: 'Codex CLI default model' },
+const STATIC_MODEL_CHOICES = [
   { label: 'Olympus · GPT-5 Codex', spec: 'codex/gpt-5-codex', aliases: ['gpt 5 codex', 'gpt-5 codex'] },
   { label: 'Olympus · GPT-5.5 High', spec: 'codex/gpt-5.5-high', aliases: ['gpt 5.5 high', 'gpt-5.5-high'] },
   { label: 'Olympus · GPT-5 High', spec: 'codex/gpt-5-high', aliases: ['gpt 5 high', 'gpt-5-high'] },
-  { label: 'Atlantis · default', spec: 'claude', detail: 'Claude CLI default model' },
-  { label: 'Atlantis · Opus', spec: 'claude/opus', aliases: ['opus'] },
-  { label: 'Atlantis · Sonnet', spec: 'claude/sonnet', aliases: ['sonnet'] },
-  { label: 'Atlantis · Haiku', spec: 'claude/haiku', aliases: ['haiku'] },
-  { label: 'Gaia · default', spec: 'opencode', detail: 'OpenCode default model' },
-  { label: 'Gaia · Fable 5 High', spec: 'opencode/fable-5-high', aliases: ['fable 5 high', 'fable-5-high'] },
-  {
-    label: 'Gaia · Claude Sonnet 4.5',
-    spec: 'opencode/anthropic/claude-sonnet-4-5',
-    aliases: ['claude sonnet 4.5', 'sonnet 4.5'],
-  },
+  { label: 'Atlantis · Claude Fable 5', spec: 'claude/claude-fable-5', aliases: ['fable', 'fable 5', 'fable 5 high'] },
+  { label: 'Atlantis · Claude Opus', spec: 'claude/opus', aliases: ['opus'] },
+  { label: 'Atlantis · Claude Sonnet', spec: 'claude/sonnet', aliases: ['sonnet'] },
+  { label: 'Atlantis · Claude Haiku', spec: 'claude/haiku', aliases: ['haiku'] },
   { label: 'Local · llama3.2', spec: 'ollama/llama3.2', aliases: ['llama', 'llama3.2'] },
 ]
 
-const MODEL_ALIAS_MAP = new Map(
-  MODEL_PRESETS.flatMap((preset) =>
-    [preset.label, preset.spec, ...(preset.aliases || [])].map((alias) => [normalizeModelAlias(alias), preset.spec]),
-  ),
-)
+let cachedOpenCodeModels = null
 
 function terminalColumns() {
   const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
@@ -56,6 +44,56 @@ function compactConnections(labels) {
   return `${labels[0]} +${labels.length - 1}`
 }
 
+function rawTerminalColumns() {
+  const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
+  return Math.max(24, Number.isFinite(columns) ? columns : 88)
+}
+
+function displayLength(value) {
+  return [...String(value)].length
+}
+
+function wrapSubmittedInput(input, width) {
+  const words = String(input).trim().split(/\s+/)
+  const lines = []
+  let line = ''
+  for (let word of words) {
+    while (displayLength(word) > width) {
+      if (line) {
+        lines.push(line)
+        line = ''
+      }
+      lines.push(word.slice(0, width))
+      word = word.slice(width)
+    }
+    if (!line) {
+      line = word
+    } else if (displayLength(line) + 1 + displayLength(word) <= width) {
+      line += ' ' + word
+    } else {
+      lines.push(line)
+      line = word
+    }
+  }
+  if (line) lines.push(line)
+  return lines.length ? lines : ['']
+}
+
+function rewriteSubmittedLine(line) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return
+  const columns = rawTerminalColumns()
+  const promptWidth = 2
+  if (displayLength(line) + promptWidth <= columns) return
+  const rows = Math.max(1, Math.ceil((displayLength(line) + promptWidth) / columns))
+  readline.moveCursor(process.stdout, 0, -rows)
+  readline.clearScreenDown(process.stdout)
+  const chunks = wrapSubmittedInput(line, Math.max(18, columns - promptWidth))
+  chunks.forEach((chunk, index) => {
+    const prefix = index === 0 ? text(bold('❯ ')) : faint('  ')
+    console.log(prefix + text(bold(chunk)))
+  })
+}
+
 function normalizeModelAlias(value) {
   return String(value)
     .toLowerCase()
@@ -65,10 +103,63 @@ function normalizeModelAlias(value) {
     .trim()
 }
 
-function resolveModelSpec(input) {
+function stripCommandAnsi(s) {
+  return String(s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
+}
+
+function loadOpenCodeModels() {
+  if (cachedOpenCodeModels) return cachedOpenCodeModels
+  const result = spawnSync('opencode', ['models'], {
+    encoding: 'utf8',
+    env: { ...process.env, NO_COLOR: '1' },
+    timeout: 5000,
+  })
+  if (result.status !== 0) {
+    cachedOpenCodeModels = []
+    return cachedOpenCodeModels
+  }
+  const seen = new Set()
+  cachedOpenCodeModels = stripCommandAnsi(result.stdout)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^(opencode|opencode-go)\/[A-Za-z0-9._-]+$/.test(line))
+    .filter((line) => {
+      if (seen.has(line)) return false
+      seen.add(line)
+      return true
+    })
+  return cachedOpenCodeModels
+}
+
+function staticChoice(choice) {
+  return { ...choice, parsed: parseModelSpec(choice.spec), visibleSpec: choice.spec }
+}
+
+function openCodeChoice(modelID) {
+  const providerID = modelID.split('/')[0]
+  return {
+    label: `Gaia · ${providerID}`,
+    spec: `opencode/${modelID}`,
+    visibleSpec: modelID,
+    parsed: { provider: 'opencode', model: modelID },
+    aliases: [modelID, modelID.split('/').at(-1), `gaia ${modelID}`],
+  }
+}
+
+function choiceAliases(choice) {
+  return [choice.label, choice.spec, choice.visibleSpec, ...(choice.aliases || [])].filter(Boolean)
+}
+
+function resolveModelSpec(input, choices = []) {
   const raw = input.trim()
   if (!raw) return null
-  return parseModelSpec(MODEL_ALIAS_MAP.get(normalizeModelAlias(raw)) || raw)
+  const normalized = normalizeModelAlias(raw)
+  const exact = choices.find((choice) => choiceAliases(choice).some((alias) => normalizeModelAlias(alias) === normalized))
+  if (exact) return exact.parsed
+  if (/^(opencode|opencode-go)\/[A-Za-z0-9._-]+$/.test(raw)) {
+    return { provider: 'opencode', model: raw }
+  }
+  return parseModelSpec(raw)
 }
 
 function loadConfig() {
@@ -218,15 +309,17 @@ export async function startRepl({ version, initialModel }) {
     return `${selection_.provider}${selection_.model ? '/' + selection_.model : ''}`
   }
 
-  function isCurrentModel(spec) {
-    const parsed = parseModelSpec(spec)
-    return parsed && parsed.provider === selection.provider && parsed.model === selection.model
+  function isCurrentChoice(choice) {
+    return choice.parsed && choice.parsed.provider === selection.provider && choice.parsed.model === selection.model
   }
 
   function modelChoices() {
     const seen = new Set()
-    return MODEL_PRESETS
-      .map((preset) => ({ ...preset, parsed: parseModelSpec(preset.spec) }))
+    const choices = [
+      ...STATIC_MODEL_CHOICES.map(staticChoice),
+      ...(available.opencode ? loadOpenCodeModels().map(openCodeChoice) : []),
+    ]
+    return choices
       .filter(({ parsed, spec }) => {
         if (!parsed || !available[parsed.provider] || seen.has(spec)) return false
         seen.add(spec)
@@ -235,7 +328,7 @@ export async function startRepl({ version, initialModel }) {
   }
 
   function currentModelChoiceIndex(choices) {
-    const index = choices.findIndex((choice) => isCurrentModel(choice.spec))
+    const index = choices.findIndex((choice) => isCurrentChoice(choice))
     return index >= 0 ? index : 0
   }
 
@@ -247,16 +340,17 @@ export async function startRepl({ version, initialModel }) {
     }
     modelPickChoices.forEach((choice, index) => {
       const selected = index === modelPickSelected
-      const current = isCurrentModel(choice.spec)
+      const current = isCurrentChoice(choice)
       const cursor = selected ? violet('▸') : faint(' ')
       const active = current ? green('●') : faint('○')
       const number = selected ? violet(String(index + 1).padStart(2)) : faint(String(index + 1).padStart(2))
       const label = selected ? text(bold(choice.label.padEnd(28))) : text(choice.label.padEnd(28))
-      const spec = selected ? violet(elideMiddle(choice.spec, specWidth)) : faint(elideMiddle(choice.spec, specWidth))
+      const specText = choice.visibleSpec || choice.spec
+      const spec = selected ? violet(elideMiddle(specText, specWidth)) : faint(elideMiddle(specText, specWidth))
       lines.push(`  ${cursor} ${active} ${number} ${label} ${spec}`)
     })
     lines.push(rule('enter selects · type alias/spec · q or esc cancels', dim, '╰'))
-    lines.push(faint('examples: gpt 5.5 high · fable 5 high · codex/gpt-5-codex'))
+    lines.push(faint('examples: gpt 5.5 high · fable 5 · opencode-go/glm-5.2'))
     return lines
   }
 
@@ -330,7 +424,7 @@ export async function startRepl({ version, initialModel }) {
     const selected = value
       ? /^\d+$/.test(value) ? modelPickChoices[Number(value) - 1] : null
       : modelPickChoices[modelPickSelected]
-    const parsed = selected ? selected.parsed : resolveModelSpec(value)
+    const parsed = selected ? selected.parsed : resolveModelSpec(value, modelPickChoices)
     if (!parsed) {
       console.log(red('Unknown model. ') + dim('Type a number, alias, or <provider>/<model>.'))
       showModelPicker()
@@ -442,7 +536,7 @@ export async function startRepl({ version, initialModel }) {
         showModelPicker()
         return
       }
-      const parsed = resolveModelSpec(spec)
+      const parsed = resolveModelSpec(spec, modelChoices())
       if (!parsed) {
         console.log(red('Unknown model. ') + dim('Use a preset alias or <provider>/<model>.'))
         return
@@ -565,6 +659,7 @@ export async function startRepl({ version, initialModel }) {
   }
 
   rl.on('line', (line) => {
+    rewriteSubmittedLine(line)
     queue.push(line)
     void pump()
   })

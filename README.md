@@ -36,7 +36,7 @@ npm install -g .
 ❯ /model codex                                  # switch to Codex (Olympus)
 ❯ /model gpt 5.5 high                           # switch via a friendly preset alias
 ❯ /model claude/sonnet                          # Claude with a specific model
-❯ /model opencode/anthropic/claude-sonnet-4-5   # OpenCode with provider/model
+❯ /model opencode-go/glm-5.2                    # Gaia/OpenCode with its exact model id
 ❯ /models                                       # list providers + status
 ❯ /new                                          # fresh conversations
 ❯ !git status                                   # run any shell command in place
@@ -63,6 +63,11 @@ them. Your last model and mode choices are remembered in `~/.akorith/cli.json`.
 Press `⌘M`/`Alt+M` to open the model picker when your terminal passes that key
 through; `/model` opens the same picker everywhere. Use ↑/↓ and Enter to pick,
 or type a number/alias/model spec directly.
+Olympus entries are Codex/GPT models, Atlantis entries are Claude models, and
+Gaia entries are loaded from `opencode models` so they appear as exact OpenCode
+model IDs such as `opencode-go/glm-5.2` rather than a vague default.
+Long submitted prompts are re-rendered with word wrapping, and the live
+`akoriting` line shows the current high-level phase while a model is working.
 
 ### Permission modes
 

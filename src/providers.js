@@ -216,13 +216,16 @@ export const MODES = {
 export function formatModel(selection) {
   const p = PROVIDERS[selection.provider]
   const model = selection.model || 'default'
+  if (selection.provider === 'opencode' && selection.model) {
+    return `${p.codename.toLowerCase()} · ${selection.model}`
+  }
   return `${p.codename.toLowerCase()} · ${p.id}/${model}`
 }
 
 // Per-provider output renderers: turn the raw CLI streams into a quiet,
 // readable feed. Every rendered line goes through print() (the spinner's log),
 // so the animated status line stays pinned at the bottom for the whole turn.
-function createRenderer(providerId, print) {
+function createRenderer(providerId, print, setStatus = () => {}) {
   if (providerId === 'codex') {
     // codex exec: stdout = final answer only; stderr = the full event log
     // (version/workdir preamble, `user` echo, `codex` messages, `exec` blocks,
@@ -260,6 +263,7 @@ function createRenderer(providerId, print) {
         lastBlank = true
         return
       }
+      setStatus('writing response')
       // Show the code changes with colored backgrounds (deduped).
       if (isDiffLine(plain)) {
         inDiff = true
@@ -281,12 +285,12 @@ function createRenderer(providerId, print) {
           if (/^-{4,}$/.test(plain.trim())) dashes++
           return
         }
-        if (plain === 'user') return void (block = 'suppress')
-        if (plain === 'codex') return void ((block = 'say'), (inDiff = false))
-        if (plain === 'thinking') return void (block = 'think')
-        if (plain === 'exec') return void ((block = 'exec'), (execHeader = true))
-        if (plain === 'apply patch') return void ((block = 'patch'), (patchOk = null))
-        if (plain === 'tokens used') return void (block = 'tokens')
+        if (plain === 'user') return void ((block = 'suppress'), setStatus('reading prompt'))
+        if (plain === 'codex') return void ((block = 'say'), (inDiff = false), setStatus('writing response'))
+        if (plain === 'thinking') return void ((block = 'think'), setStatus('thinking through the request'))
+        if (plain === 'exec') return void ((block = 'exec'), (execHeader = true), setStatus('running command'))
+        if (plain === 'apply patch') return void ((block = 'patch'), (patchOk = null), setStatus('editing files'))
+        if (plain === 'tokens used') return void ((block = 'tokens'), setStatus('wrapping up'))
         if (block === 'say') say(line)
         else if (block === 'think') {
           // Keep the live spinner as the thinking indicator; the internal
@@ -297,6 +301,7 @@ function createRenderer(providerId, print) {
             execHeader = false
             const m = plain.match(/-l?c '([\s\S]+)' in /)
             const cmd = m ? m[1] : plain.replace(/ in \/.*$/, '')
+            setStatus('running ' + compactCommand(cmd, 42))
             print(violet('  › ') + dim(compactCommand(cmd)))
             lastBlank = false
           } else if (/succeeded in \S+:?\s*$/.test(plain)) {
@@ -341,6 +346,9 @@ function createRenderer(providerId, print) {
     const emit = createFlowLinePrinter(print, { suppressRuntimeBanner: true })
     const route = (line) => {
       const plain = stripAnsi(line).trim()
+      if (/^\$\s+/.test(plain)) setStatus('running command')
+      else if (/^[-–—]>|^→|^➜/.test(plain)) setStatus('reading context')
+      else if (plain) setStatus('writing response')
       if (!started) {
         if (!plain || /^>\s*(build|run)\b/i.test(plain)) return
         started = true
@@ -354,11 +362,15 @@ function createRenderer(providerId, print) {
   const emit = createFlowLinePrinter(print)
   return {
     stdoutLine(line) {
+      if (stripAnsi(line).trim()) setStatus('writing response')
       emit(line)
     },
     stderrLine(line) {
       const plain = stripAnsi(line).trim()
-      if (plain) print(dim(plain))
+      if (plain) {
+        setStatus('processing provider output')
+        print(dim(plain))
+      }
     },
     flush() {},
   }
@@ -496,10 +508,13 @@ function isListingOutputLine(line) {
   )
 }
 
-function compactCommand(command) {
+function compactCommand(command, max = 110) {
   const oneLine = command.replace(/\s+/g, ' ').trim()
-  if (oneLine.length <= 110) return oneLine
-  return `${oneLine.slice(0, 78)} ... ${oneLine.slice(-26)}`
+  if (oneLine.length <= max) return oneLine
+  if (max <= 18) return oneLine.slice(0, max)
+  const head = Math.max(8, Math.floor(max * 0.68))
+  const tail = Math.max(6, max - head - 5)
+  return `${oneLine.slice(0, head)} ... ${oneLine.slice(-tail)}`
 }
 
 // Print raw provider output, but colorize unified-diff regions: once a real
@@ -562,7 +577,7 @@ export function runTurn({ selection, prompt, resume, cwd, mode = 'act' }, { onSp
     onSpawn?.(child)
 
     const spinner = startSpinner(provider.codename.toLowerCase(), provider.display)
-    const renderer = createRenderer(provider.id, (line) => spinner.log(line))
+    const renderer = createRenderer(provider.id, (line) => spinner.log(line), (status) => spinner.setStatus(status))
     const out = lineSplitter((l) => renderer.stdoutLine(l))
     const err = lineSplitter((l) => renderer.stderrLine(l))
     child.stdout.on('data', (chunk) => out.push(chunk))
