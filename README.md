@@ -32,7 +32,9 @@ npm install -g .
 ❯ /mode view                                    # read-only; /mode act to work (default)
 ❯ push this commit to origin                    # models drive git/gh directly
 ❯ /connect                                      # see & toggle GitHub, git, npm
+❯ /model                                        # open the model picker (↑/↓, Enter)
 ❯ /model codex                                  # switch to Codex (Olympus)
+❯ /model gpt 5.5 high                           # switch via a friendly preset alias
 ❯ /model claude/sonnet                          # Claude with a specific model
 ❯ /model opencode/anthropic/claude-sonnet-4-5   # OpenCode with provider/model
 ❯ /models                                       # list providers + status
@@ -58,6 +60,9 @@ akorith -p "summarize the diff" -m claude/haiku
 
 Each provider keeps its own conversation thread for the session; `/new` resets all of
 them. Your last model and mode choices are remembered in `~/.akorith/cli.json`.
+Press `⌘M`/`Alt+M` to open the model picker when your terminal passes that key
+through; `/model` opens the same picker everywhere. Use ↑/↓ and Enter to pick,
+or type a number/alias/model spec directly.
 
 ### Permission modes
 

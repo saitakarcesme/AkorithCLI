@@ -12,6 +12,31 @@ import { animateBanner, rule, bold, dim, faint, text, violet, green, red, yellow
 const CONFIG_DIR = path.join(os.homedir(), '.akorith')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'cli.json')
 
+const MODEL_PRESETS = [
+  { label: 'Olympus · default', spec: 'codex', detail: 'Codex CLI default model' },
+  { label: 'Olympus · GPT-5 Codex', spec: 'codex/gpt-5-codex', aliases: ['gpt 5 codex', 'gpt-5 codex'] },
+  { label: 'Olympus · GPT-5.5 High', spec: 'codex/gpt-5.5-high', aliases: ['gpt 5.5 high', 'gpt-5.5-high'] },
+  { label: 'Olympus · GPT-5 High', spec: 'codex/gpt-5-high', aliases: ['gpt 5 high', 'gpt-5-high'] },
+  { label: 'Atlantis · default', spec: 'claude', detail: 'Claude CLI default model' },
+  { label: 'Atlantis · Opus', spec: 'claude/opus', aliases: ['opus'] },
+  { label: 'Atlantis · Sonnet', spec: 'claude/sonnet', aliases: ['sonnet'] },
+  { label: 'Atlantis · Haiku', spec: 'claude/haiku', aliases: ['haiku'] },
+  { label: 'Gaia · default', spec: 'opencode', detail: 'OpenCode default model' },
+  { label: 'Gaia · Fable 5 High', spec: 'opencode/fable-5-high', aliases: ['fable 5 high', 'fable-5-high'] },
+  {
+    label: 'Gaia · Claude Sonnet 4.5',
+    spec: 'opencode/anthropic/claude-sonnet-4-5',
+    aliases: ['claude sonnet 4.5', 'sonnet 4.5'],
+  },
+  { label: 'Local · llama3.2', spec: 'ollama/llama3.2', aliases: ['llama', 'llama3.2'] },
+]
+
+const MODEL_ALIAS_MAP = new Map(
+  MODEL_PRESETS.flatMap((preset) =>
+    [preset.label, preset.spec, ...(preset.aliases || [])].map((alias) => [normalizeModelAlias(alias), preset.spec]),
+  ),
+)
+
 function terminalColumns() {
   const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
   return Math.max(44, Math.min(Number.isFinite(columns) ? columns : 88, 120))
@@ -29,6 +54,21 @@ function compactConnections(labels) {
   const joined = labels.join(' · ')
   if (joined.length <= terminalColumns() - 18) return joined
   return `${labels[0]} +${labels.length - 1}`
+}
+
+function normalizeModelAlias(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/[._/]+/g, ' ')
+    .replace(/-/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function resolveModelSpec(input) {
+  const raw = input.trim()
+  if (!raw) return null
+  return parseModelSpec(MODEL_ALIAS_MAP.get(normalizeModelAlias(raw)) || raw)
 }
 
 function loadConfig() {
@@ -74,6 +114,10 @@ export async function startRepl({ version, initialModel }) {
   // the first turn of that provider in this Akorith session.
   const started = { claude: false, codex: false, opencode: false, ollama: false }
   let activeChild = null
+  let awaitingModelPick = false
+  let modelPickChoices = []
+  let modelPickSelected = 0
+  let modelPickerRows = 0
   let lastSigint = 0
 
   console.clear()
@@ -170,10 +214,137 @@ export async function startRepl({ version, initialModel }) {
     console.log()
   }
 
+  function modelSpec(selection_) {
+    return `${selection_.provider}${selection_.model ? '/' + selection_.model : ''}`
+  }
+
+  function isCurrentModel(spec) {
+    const parsed = parseModelSpec(spec)
+    return parsed && parsed.provider === selection.provider && parsed.model === selection.model
+  }
+
+  function modelChoices() {
+    const seen = new Set()
+    return MODEL_PRESETS
+      .map((preset) => ({ ...preset, parsed: parseModelSpec(preset.spec) }))
+      .filter(({ parsed, spec }) => {
+        if (!parsed || !available[parsed.provider] || seen.has(spec)) return false
+        seen.add(spec)
+        return true
+      })
+  }
+
+  function currentModelChoiceIndex(choices) {
+    const index = choices.findIndex((choice) => isCurrentModel(choice.spec))
+    return index >= 0 ? index : 0
+  }
+
+  function modelPickerLines() {
+    const specWidth = Math.max(18, Math.min(34, terminalColumns() - 36))
+    const lines = [rule('model picker · ↑/↓ · enter', violet, '╭')]
+    if (!modelPickChoices.length) {
+      lines.push(red('  No installed providers are available.'))
+    }
+    modelPickChoices.forEach((choice, index) => {
+      const selected = index === modelPickSelected
+      const current = isCurrentModel(choice.spec)
+      const cursor = selected ? violet('▸') : faint(' ')
+      const active = current ? green('●') : faint('○')
+      const number = selected ? violet(String(index + 1).padStart(2)) : faint(String(index + 1).padStart(2))
+      const label = selected ? text(bold(choice.label.padEnd(28))) : text(choice.label.padEnd(28))
+      const spec = selected ? violet(elideMiddle(choice.spec, specWidth)) : faint(elideMiddle(choice.spec, specWidth))
+      lines.push(`  ${cursor} ${active} ${number} ${label} ${spec}`)
+    })
+    lines.push(rule('enter selects · type alias/spec · q or esc cancels', dim, '╰'))
+    lines.push(faint('examples: gpt 5.5 high · fable 5 high · codex/gpt-5-codex'))
+    return lines
+  }
+
+  function printModelPicker() {
+    const lines = modelPickerLines()
+    for (const line of lines) console.log(line)
+    modelPickerRows = lines.length
+  }
+
+  function clearModelPicker() {
+    if (!process.stdout.isTTY || !modelPickerRows) return
+    readline.clearLine(process.stdout, 0)
+    readline.cursorTo(process.stdout, 0)
+    readline.moveCursor(process.stdout, 0, -modelPickerRows)
+    readline.clearScreenDown(process.stdout)
+  }
+
+  function redrawModelPicker() {
+    clearModelPicker()
+    printModelPicker()
+    rl.prompt(true)
+  }
+
+  function closeModelPicker() {
+    awaitingModelPick = false
+    modelPickerRows = 0
+    modelPickChoices = []
+    modelPickSelected = 0
+  }
+
+  function moveModelPicker(delta) {
+    if (!awaitingModelPick || !modelPickChoices.length) return
+    modelPickSelected = (modelPickSelected + delta + modelPickChoices.length) % modelPickChoices.length
+    if (rl.line) {
+      rl.line = ''
+      rl.cursor = 0
+    }
+    redrawModelPicker()
+  }
+
+  function showModelPicker() {
+    if (activeChild) {
+      console.log(dim('Model picker opens after the current turn finishes.'))
+      return
+    }
+    modelPickChoices = modelChoices()
+    modelPickSelected = currentModelChoiceIndex(modelPickChoices)
+    awaitingModelPick = true
+    console.log()
+    printModelPicker()
+  }
+
+  function applyModel(parsed) {
+    if (!available[parsed.provider]) {
+      console.log(yellow(`${parsed.provider} CLI is not installed on this machine.`))
+      return false
+    }
+    selection = parsed
+    saveConfig({ ...config, model: modelSpec(selection) })
+    console.log(green('✓ ') + 'Now talking to ' + bold(formatModel(selection)))
+    return true
+  }
+
+  function handleModelPickerInput(input) {
+    const value = input.trim()
+    if (value === 'q' || value === 'quit' || value === 'cancel') {
+      closeModelPicker()
+      console.log(dim('Model switch cancelled.'))
+      return
+    }
+    const selected = value
+      ? /^\d+$/.test(value) ? modelPickChoices[Number(value) - 1] : null
+      : modelPickChoices[modelPickSelected]
+    const parsed = selected ? selected.parsed : resolveModelSpec(value)
+    if (!parsed) {
+      console.log(red('Unknown model. ') + dim('Type a number, alias, or <provider>/<model>.'))
+      showModelPicker()
+      return
+    }
+    closeModelPicker()
+    applyModel(parsed)
+  }
+
   function help() {
     console.log()
     console.log(text(bold('Commands')))
-    console.log(`  ${violet('/model <spec>')}   switch model — e.g. /model claude/sonnet, /model codex`)
+    console.log(`  ${violet('/model')}          open model picker — also via ⌘M/Alt+M when your terminal sends it`)
+    console.log(`  ${violet('/model <spec>')}   switch directly — e.g. /model gpt 5.5 high, /model claude/sonnet`)
     console.log(`  ${violet('/models')}         list providers and how to address their models`)
     console.log(`  ${violet('/mode <m>')}       view (read-only) or act (can edit files) — default act`)
     console.log(`  ${violet('/connect')}        show & toggle GitHub, git, npm integrations`)
@@ -189,6 +360,10 @@ export async function startRepl({ version, initialModel }) {
 
   async function handle(line) {
     const input = line.trim()
+    if (awaitingModelPick) {
+      handleModelPickerInput(input)
+      return
+    }
     if (!input) return
 
     if (input === '/exit' || input === '/quit') {
@@ -264,21 +439,15 @@ export async function startRepl({ version, initialModel }) {
     if (input.startsWith('/model')) {
       const spec = input.slice(6).trim()
       if (!spec) {
-        listModels()
+        showModelPicker()
         return
       }
-      const parsed = parseModelSpec(spec)
+      const parsed = resolveModelSpec(spec)
       if (!parsed) {
-        console.log(red('Unknown provider. ') + dim('Use one of: ' + Object.keys(PROVIDERS).join(', ')))
+        console.log(red('Unknown model. ') + dim('Use a preset alias or <provider>/<model>.'))
         return
       }
-      if (!available[parsed.provider]) {
-        console.log(yellow(`${parsed.provider} CLI is not installed on this machine.`))
-        return
-      }
-      selection = parsed
-      saveConfig({ ...config, model: `${selection.provider}${selection.model ? '/' + selection.model : ''}` })
-      console.log(green('✓ ') + 'Now talking to ' + bold(formatModel(selection)))
+      applyModel(parsed)
       return
     }
     if (input.startsWith('/')) {
@@ -360,6 +529,39 @@ export async function startRepl({ version, initialModel }) {
     busy = false
     if (closing) finish()
     rl.prompt()
+  }
+
+  if (process.stdin.isTTY) {
+    readline.emitKeypressEvents(process.stdin, rl)
+    process.stdin.on('keypress', (_str, key = {}) => {
+      if (awaitingModelPick) {
+        if (key.name === 'up') {
+          moveModelPicker(-1)
+          return
+        }
+        if (key.name === 'down') {
+          moveModelPicker(1)
+          return
+        }
+        if (key.name === 'escape') {
+          clearModelPicker()
+          closeModelPicker()
+          console.log(dim('Model switch cancelled.'))
+          rl.prompt()
+          return
+        }
+      }
+      if (!(key.name === 'm' && key.meta)) return
+      if (activeChild || busy || closing || awaitingModelPick) return
+      if (rl.line) {
+        process.stdout.write('\x07')
+        return
+      }
+      readline.clearLine(process.stdout, 0)
+      readline.cursorTo(process.stdout, 0)
+      queue.push('/model')
+      void pump()
+    })
   }
 
   rl.on('line', (line) => {
