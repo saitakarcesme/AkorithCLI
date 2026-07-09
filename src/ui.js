@@ -265,7 +265,7 @@ function centeredBoxLine(content, width) {
   return faint('│') + padVisible(content, width - 2) + faint('│')
 }
 
-function sliceVisible(value, width) {
+export function sliceVisible(value, width) {
   const input = String(value ?? '')
   const limit = Math.max(0, width)
   let out = ''
