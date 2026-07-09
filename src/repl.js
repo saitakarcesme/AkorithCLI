@@ -302,6 +302,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   let terminalScreen = null
   let gitHeader = readGitHeaderState(process.cwd())
   let chordUntil = 0
+  let pasteNoticeTimer = null
 
   function resetStarted(next = {}) {
     for (const key of Object.keys(started)) started[key] = Boolean(next[key])
@@ -1869,6 +1870,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     resetCursor()
     if (terminalScreen) {
       setTerminalAdapter(null)
+      if (pasteNoticeTimer) clearTimeout(pasteNoticeTimer)
       process.stdin.setRawMode?.(false)
       terminalScreen.stop()
       terminalScreen = null
@@ -2069,6 +2071,13 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       else if (action.type === 'eof') rl.close()
       else if (action.type === 'escape' && rl.line) { rl.line = ''; rl.cursor = 0 }
       else if (action.type === 'bell') process.stdout.write('\x07')
+      if (action.pasted) {
+        const lines = String(str).split('\n').length
+        terminalScreen.setNotice(green(`Pasted ${[...String(str)].length} characters${lines > 1 ? ` across ${lines} lines` : ''}.`))
+        if (pasteNoticeTimer) clearTimeout(pasteNoticeTimer)
+        pasteNoticeTimer = setTimeout(() => terminalScreen?.setNotice(''), 1800)
+        pasteNoticeTimer.unref?.()
+      }
       terminalScreen.scheduleRender()
     })
   }
