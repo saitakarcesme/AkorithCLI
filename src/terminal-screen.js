@@ -226,6 +226,7 @@ export function buildFrame({
   context = 'provider',
   queue = 0,
   transcript = [],
+  transcriptOffset = 0,
   overlay = null,
   notice = '',
   spinner = '',
@@ -240,7 +241,10 @@ export function buildFrame({
   if (Array.isArray(overlay)) {
     bodySource = centerBlock(overlayWindow(overlay, bodyHeight), viewport.width, bodyHeight)
   } else if (transcript.length) {
-    bodySource = transcript.slice(-(bodyHeight - (notice ? 1 : 0) - (spinner ? 1 : 0)))
+    const capacity = Math.max(1, bodyHeight - (notice ? 1 : 0) - (spinner ? 1 : 0))
+    const offset = Math.max(0, Math.min(Number(transcriptOffset) || 0, Math.max(0, transcript.length - 1)))
+    const end = Math.max(0, transcript.length - offset)
+    bodySource = transcript.slice(Math.max(0, end - capacity), end)
   } else {
     bodySource = centerBlock(splashLines({ ...viewport, version, model, cwd }), viewport.width, bodyHeight)
   }
@@ -281,6 +285,7 @@ export class TerminalScreen {
     this.started = false
     this.renderPending = false
     this.maxTranscriptRows = 4000
+    this.transcriptOffset = 0
   }
 
   dimensions() {
@@ -310,11 +315,13 @@ export class TerminalScreen {
     if (this.transcript.length > this.maxTranscriptRows) {
       this.transcript.splice(0, this.transcript.length - this.maxTranscriptRows)
     }
+    this.transcriptOffset = 0
     this.scheduleRender()
   }
 
   clear() {
     this.transcript = []
+    this.transcriptOffset = 0
     this.notice = ''
     this.scheduleRender()
   }
@@ -334,6 +341,52 @@ export class TerminalScreen {
     this.scheduleRender()
   }
 
+  scroll(delta) {
+    const amount = Number(delta) || 0
+    this.transcriptOffset = Math.max(0, Math.min(this.transcript.length - 1, this.transcriptOffset + amount))
+    this.notice = this.transcriptOffset ? `scrollback · ${this.transcriptOffset} rows from latest · PageDown returns` : ''
+    this.scheduleRender()
+  }
+
+  jumpTo(index) {
+    const target = Math.max(0, Math.min(Number(index) || 0, Math.max(0, this.transcript.length - 1)))
+    this.transcriptOffset = Math.max(0, this.transcript.length - target - 1)
+    this.overlay = null
+    this.notice = `timeline · row ${target + 1}/${this.transcript.length}`
+    this.scheduleRender()
+  }
+
+  searchTranscript(query) {
+    const needle = String(query || '').toLowerCase()
+    if (!needle) return -1
+    for (let index = this.transcript.length - 1; index >= 0; index--) {
+      if (stripAnsi(this.transcript[index]).toLowerCase().includes(needle)) {
+        this.jumpTo(index)
+        return index
+      }
+    }
+    this.notice = `timeline · no match for ${query}`
+    this.scheduleRender()
+    return -1
+  }
+
+  timelineLines(limit = 12) {
+    const width = this.dimensions().width
+    const entries = this.transcript
+      .map((line, index) => ({ index, line: stripAnsi(line).trim() }))
+      .filter((entry) => entry.line)
+      .slice(-Math.max(1, limit))
+    const inner = Math.max(8, width - 4)
+    const lines = [boxBorder('╭', '─', '╮', width, 'Timeline')]
+    if (!entries.length) lines.push(`│ ${padVisible('No transcript rows yet.', inner)} │`)
+    for (const entry of entries) {
+      const label = String(entry.index + 1).padStart(4)
+      lines.push(`│ ${padVisible(`${label}  ${fitText(entry.line, Math.max(4, inner - 6), { middle: true })}`, inner)} │`)
+    }
+    lines.push(boxBorder('╰', '─', '╯', width, '/timeline <row|tail|search text>'))
+    return lines
+  }
+
   scheduleRender() {
     if (!this.started || this.renderPending) return
     this.renderPending = true
@@ -345,7 +398,7 @@ export class TerminalScreen {
 
   renderNow() {
     if (!this.started) return
-    const frame = buildFrame({ ...this.dimensions(), ...this.state(), transcript: this.transcript, overlay: this.overlay, notice: this.notice, spinner: this.spinner })
+    const frame = buildFrame({ ...this.dimensions(), ...this.state(), transcript: this.transcript, transcriptOffset: this.transcriptOffset, overlay: this.overlay, notice: this.notice, spinner: this.spinner })
     const body = frame.lines.map((line) => `${line}\x1b[K`).join('\n')
     this.output.write(`\x1b[?25l\x1b[H${body}\x1b[J\x1b[${frame.cursorRow};${frame.cursorColumn}H\x1b[?25h`)
   }
