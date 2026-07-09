@@ -4,7 +4,8 @@
   "description": "Akorith CLI — the Agent OS for your terminal. Orchestrate Claude, Codex, and OpenCode from one prompt, no API keys.",
   "type": "module",
   "bin": {
-    "akorith": "bin/akorith.js"
+    "akorith": "bin/akorith.js",
+    "update": "bin/update.js"
   },
   "files": [
     "bin",

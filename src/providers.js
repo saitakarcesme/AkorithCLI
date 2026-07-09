@@ -7,6 +7,8 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import {
   startSpinner, stripAnsi, text as bright, dim, faint, green, red, violet, bold, diffAdd, diffDel,
 } from './ui.js'
+import { highlight, normalizeLang } from './highlight.js'
+import { toolCardHeader, toolCardBody } from './toolcard.js'
 
 export const PROVIDERS = {
   claude: {
@@ -15,7 +17,7 @@ export const PROVIDERS = {
     codename: 'Atlantis',
     bin: 'claude',
     hint: 'model aliases: opus, sonnet, haiku (e.g. /model claude/sonnet)',
-    args({ prompt, model, resume, mode }) {
+    args({ prompt, model, resume, mode, options = {} }) {
       const args = ['-p', prompt]
       if (model) args.push('--model', model)
       if (resume) args.push('-c')
@@ -27,6 +29,9 @@ export const PROVIDERS = {
         const tools = allowedTools()
         if (tools.length) args.push('--allowedTools', ...tools)
       }
+      for (const dir of options.addDirs || []) args.push('--add-dir', dir)
+      if (options.json) args.push('--output-format', 'json')
+      if (options.outputSchema) args.push('--json-schema', options.outputSchema)
       return args
     },
   },
@@ -36,18 +41,42 @@ export const PROVIDERS = {
     codename: 'Olympus',
     bin: 'codex',
     hint: 'pass any Codex model id (e.g. /model codex/gpt-5-codex)',
-    args({ prompt, model, resume, mode }) {
-      const args = resume ? ['exec', 'resume', '--last', prompt] : ['exec', prompt]
+    args({ prompt, model, resume, mode, options = {} }) {
+      const args = resume ? ['exec', 'resume', '--last'] : ['exec']
       args.push('--skip-git-repo-check')
       if (model) args.push('-m', model)
+      for (const image of options.images || []) args.push('-i', image)
+      if (!resume) {
+        for (const dir of options.addDirs || []) args.push('--add-dir', dir)
+        if (options.profile) args.push('-p', options.profile)
+      }
+      for (const config of options.configs || []) args.push('-c', config)
+      for (const feature of options.enableFeatures || []) args.push('--enable', feature)
+      for (const feature of options.disableFeatures || []) args.push('--disable', feature)
+      if (options.strictConfig) args.push('--strict-config')
+      if (options.search && !resume) args.push('--search')
+      if (options.outputSchema) args.push('--output-schema', options.outputSchema)
+      if (options.json) args.push('--json')
+      if (options.outputFile) args.push('-o', options.outputFile)
+      if (options.approval && !resume) args.push('-a', options.approval)
+      if (options.oss && !resume) args.push('--oss')
+      if (options.localProvider && !resume) args.push('--local-provider', options.localProvider)
+      if (options.dangerBypass) args.push('--dangerously-bypass-approvals-and-sandbox')
+      if (options.bypassHookTrust) args.push('--dangerously-bypass-hook-trust')
+      if (options.ephemeral) args.push('--ephemeral')
+      if (options.ignoreUserConfig) args.push('--ignore-user-config')
+      if (options.ignoreRules) args.push('--ignore-rules')
+      if (options.color && !resume) args.push('--color', options.color)
       // `resume` doesn't take -s, but both forms accept -c overrides
-      const sandbox = mode === 'act' ? 'workspace-write' : 'read-only'
-      args.push('-c', `sandbox_mode="${sandbox}"`)
+      const sandbox = options.sandbox || (mode === 'act' ? 'workspace-write' : 'read-only')
+      if (!resume) args.push('-s', sandbox)
+      else args.push('-c', `sandbox_mode="${sandbox}"`)
       // Codex's workspace-write sandbox blocks the network by default, so
       // git push / gh / npm publish fail. Open it when a connection is on.
       if (mode === 'act' && connectionsOn()) {
         args.push('-c', 'sandbox_workspace_write.network_access=true')
       }
+      args.push(prompt)
       return args
     },
   },
@@ -57,10 +86,11 @@ export const PROVIDERS = {
     codename: 'Gaia',
     bin: 'opencode',
     hint: 'model format provider/model (e.g. /model opencode/anthropic/claude-sonnet-4-5)',
-    args({ prompt, model, resume, mode }) {
+    args({ prompt, model, resume, mode, options = {} }) {
       const args = ['run', prompt]
       if (model) args.push('-m', model)
       if (resume) args.push('-c')
+      if (options.sessionId) args.push('-s', options.sessionId)
       // OpenCode's built-in plan agent is its read-only mode
       if (mode === 'act') args.push('--auto')
       else args.push('--agent', 'plan')
@@ -225,7 +255,8 @@ export function formatModel(selection) {
 // Per-provider output renderers: turn the raw CLI streams into a quiet,
 // readable feed. Every rendered line goes through print() (the spinner's log),
 // so the animated status line stays pinned at the bottom for the whole turn.
-function createRenderer(providerId, print, setStatus = () => {}) {
+function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
+  const thinkingMode = opts.thinking || 'hide'
   if (providerId === 'codex') {
     // codex exec: stdout = final answer only; stderr = the full event log
     // (version/workdir preamble, `user` echo, `codex` messages, `exec` blocks,
@@ -237,6 +268,8 @@ function createRenderer(providerId, print, setStatus = () => {}) {
     let inDiff = false
     let spokeFromLog = false
     let lastBlank = true
+    let thinkingOpen = false
+    let tokenReport = null
     const flow = createFlowLinePrinter(print)
     const finalAnswer = []
     const shownDiff = new Set() // codex reprints the cumulative diff; show each line once
@@ -275,6 +308,34 @@ function createRenderer(providerId, print, setStatus = () => {}) {
       flow(line)
       spokeFromLog = true
     }
+    const renderThinking = (line) => {
+      const plain = stripAnsi(line).trimEnd()
+      if (!plain) return
+      if (thinkingMode === 'hide') return
+      if (thinkingMode === 'minimal') {
+        if (!thinkingOpen) {
+          thinkingOpen = true
+          print(faint('  ◐ thinking…'))
+        }
+        return
+      }
+      // show: stream reasoning inline, dimmed, indented.
+      if (!thinkingOpen) {
+        thinkingOpen = true
+        if (!lastBlank) print('')
+        print(violet('  ▸ ') + dim('thinking'))
+        lastBlank = false
+      }
+      print(faint('    ' + plain))
+      lastBlank = false
+    }
+    const closeThinking = () => {
+      if (thinkingOpen) {
+        thinkingOpen = false
+        if (thinkingMode === 'show') print('')
+        lastBlank = true
+      }
+    }
     return {
       stdoutLine(line) {
         finalAnswer.push(line)
@@ -285,16 +346,15 @@ function createRenderer(providerId, print, setStatus = () => {}) {
           if (/^-{4,}$/.test(plain.trim())) dashes++
           return
         }
-        if (plain === 'user') return void ((block = 'suppress'), setStatus('reading prompt'))
-        if (plain === 'codex') return void ((block = 'say'), (inDiff = false), setStatus('writing response'))
-        if (plain === 'thinking') return void ((block = 'think'), setStatus('thinking through the request'))
-        if (plain === 'exec') return void ((block = 'exec'), (execHeader = true), setStatus('running command'))
-        if (plain === 'apply patch') return void ((block = 'patch'), (patchOk = null), setStatus('editing files'))
-        if (plain === 'tokens used') return void ((block = 'tokens'), setStatus('wrapping up'))
+        if (plain === 'user') { closeThinking(); block = 'suppress'; setStatus('reading prompt'); return }
+        if (plain === 'codex') { closeThinking(); block = 'say'; inDiff = false; setStatus('writing response'); return }
+        if (plain === 'thinking') { closeThinking(); block = 'think'; setStatus('thinking through the request'); return }
+        if (plain === 'exec') { closeThinking(); block = 'exec'; execHeader = true; setStatus('running command'); return }
+        if (plain === 'apply patch') { closeThinking(); block = 'patch'; patchOk = null; setStatus('editing files'); return }
+        if (plain === 'tokens used') { closeThinking(); block = 'tokens'; setStatus('wrapping up'); return }
         if (block === 'say') say(line)
         else if (block === 'think') {
-          // Keep the live spinner as the thinking indicator; the internal
-          // reasoning stream is too noisy for the Akorith transcript.
+          renderThinking(line)
         }
         else if (block === 'exec') {
           if (execHeader) {
@@ -302,7 +362,7 @@ function createRenderer(providerId, print, setStatus = () => {}) {
             const m = plain.match(/-l?c '([\s\S]+)' in /)
             const cmd = m ? m[1] : plain.replace(/ in \/.*$/, '')
             setStatus('running ' + compactCommand(cmd, 42))
-            print(violet('  › ') + dim(compactCommand(cmd)))
+            print(toolCardHeader({ name: 'exec', status: 'running', subtitle: compactCommand(cmd) }))
             lastBlank = false
           } else if (/succeeded in \S+:?\s*$/.test(plain)) {
             print(green('    ✓ ') + faint(plain.trim().replace(/:$/, '')))
@@ -321,12 +381,14 @@ function createRenderer(providerId, print, setStatus = () => {}) {
             // the patched file's path line (before the diff body)
             const file = plain.split('/').pop()
             const mark = patchOk ? green(' ✓') : red(' ✗')
-            print(violet('  › ') + dim('edit ' + file) + mark)
+            print(toolCardHeader({ name: 'edit', status: patchOk ? 'completed' : 'error', title: file, subtitle: 'patched' + (patchOk ? '' : ' failed') }))
             lastBlank = false
             patchOk = null
           }
         } else if (block === 'tokens' && plain) {
-          // Token accounting is useful for logs, but noisy in the live terminal.
+          // Capture token accounting for the closing footer (was dropped before).
+          const m = plain.match(/(\d[\d,]*)\s+tokens?/i) || plain.match(/(\d[\d,]*)/)
+          if (m) tokenReport = m[1]
           block = 'suppress'
         }
       },
@@ -334,6 +396,9 @@ function createRenderer(providerId, print, setStatus = () => {}) {
         // stderr log went missing (future codex versions?) — fall back to stdout
         if (!spokeFromLog && finalAnswer.some((l) => stripAnsi(l).trim())) {
           for (const line of finalAnswer) flow(line)
+        }
+        if (tokenReport) {
+          print(faint('  · ') + dim('tokens ' + tokenReport))
         }
       },
     }
@@ -379,6 +444,36 @@ function createRenderer(providerId, print, setStatus = () => {}) {
 function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
   let lastBlank = true
   let suppressListingOutput = false
+  // Fenced code block tracking: when we see ```lang we start buffering lines
+  // until the closing fence, then render the block with syntax highlighting
+  // (or plain if the lang is unknown). A faint left border + 2-space indent
+  // gives the block a contained, terminal-ghibson feel.
+  let inCode = false
+  let codeLang = null
+  let codeBuf = []
+  const startCode = (line) => {
+    inCode = true
+    codeLang = normalizeLang(stripAnsi(line).replace(/^```/, '').trim())
+    codeBuf = []
+    lastBlank = false
+  }
+  const flushCode = () => {
+    inCode = false
+    const body = codeBuf.join('\n').replace(/\n$/, '')
+    codeBuf = []
+    printCodeBlock(body, codeLang)
+    lastBlank = true
+  }
+  const printCodeBlock = (body, lang) => {
+    const label = lang ? dim(lang) : faint('code')
+    print(faint('  │ ') + label)
+    const lines = body.split('\n')
+    const styled = highlight(body, lang)
+    for (let i = 0; i < styled.length; i++) {
+      print(faint('  │ ') + styled[i])
+    }
+    print(faint('  ╵'))
+  }
   const emitPlain = (line) => {
     const plain = stripAnsi(line).trim()
     if (!plain) {
@@ -395,8 +490,15 @@ function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
     const plain = stripAnsi(line).trimEnd()
     const trimmed = plain.trim()
 
-    if (!trimmed) return emitPlain('')
-    if (/^```/.test(trimmed)) return
+    if (!trimmed) {
+      if (inCode) { codeBuf.push(''); return }
+      return emitPlain('')
+    }
+    if (/^```/.test(trimmed)) {
+      if (inCode) { flushCode(); return }
+      startCode(trimmed); return
+    }
+    if (inCode) { codeBuf.push(plain); return }
     if (/^\(no output\)$/i.test(trimmed)) return
 
     if (suppressListingOutput) {
@@ -524,20 +626,90 @@ function compactCommand(command, max = 110) {
 // is never touched.
 function diffAwareLine(print) {
   let inRegion = false
+  let card = null // {path, action, adds, dels, headerPrinted}
+  let pendingPath = null
+  const chip = (action) => {
+    if (action === 'created') return green('created')
+    if (action === 'deleted') return red('deleted')
+    if (action === 'moved') return violet('moved')
+    return dim('patched')
+  }
+  const printCardHeader = () => {
+    if (!card || card.headerPrinted) return
+    card.headerPrinted = true
+    const file = card.path || '?'
+    print(violet('  ▸ ') + bold(file.split('/').pop()) + faint('  ' + chip(card.action)) +
+      faint('   ' + green('+' + card.adds) + ' ' + red('-' + card.dels)))
+  }
+  const printCardFooter = () => {
+    if (!card) return
+    card = null
+  }
+  const closeRegion = () => {
+    if (card && !card.headerPrinted) printCardHeader()
+    inRegion = false
+    printCardFooter()
+  }
   return (line) => {
     const t = stripAnsi(line).replace(/\s+$/, '')
-    if (/^diff --git /.test(t) || /^@@ -\d+.*@@/.test(t)) inRegion = true
+    // diff --git a/x b/y opens a new file's diff; start a card.
+    const m = t.match(/^diff --git a\/(.+?) b\/(.+)$/)
+    if (m) {
+      if (inRegion) {
+        if (card && !card.headerPrinted) printCardHeader()
+        printCardFooter()
+      }
+      inRegion = true
+      const moved = m[1] !== m[2]
+      card = { path: m[2], action: moved ? 'moved' : 'patched', adds: 0, dels: 0, headerPrinted: false }
+      return
+    }
+    if (!inRegion) {
+      // A standalone @@ can start a region without a diff --git header.
+      if (/^@@ -\d+.*@@/.test(t)) {
+        inRegion = true
+        card = { path: '?', action: 'patched', adds: 0, dels: 0, headerPrinted: true }
+      }
+    }
     if (inRegion) {
-      if (/^(diff --git|index [0-9a-f]|new file|deleted file|--- |\+\+\+ )/.test(t)) return
-      if (/^@@ /.test(t)) return void print(faint('  ' + t))
-      if (/^\+/.test(t)) return void print(diffAdd(t.slice(1)))
-      if (/^-/.test(t)) return void print(diffDel(t.slice(1)))
+      if (/^index [0-9a-f]/.test(t)) return
+      if (/^new file mode/.test(t)) { if (card) card.action = 'created'; return }
+      if (/^deleted file mode/.test(t)) { if (card) card.action = 'deleted'; return }
+      if (/^rename from/.test(t) || /^rename to/.test(t)) { if (card) card.action = 'moved'; return }
+      if (/^--- /.test(t)) {
+        const mm = t.match(/^--- (?:a\/)?(.+)$/)
+        if (mm && card && card.path === '?' && mm[1] !== '/dev/null') card.path = mm[1]
+        return
+      }
+      if (/^\+\+\+ /.test(t)) {
+        const mm = t.match(/^\+\+\+ (?:b\/)?(.+)$/)
+        if (mm && card && mm[1] !== '/dev/null') card.path = mm[1]
+        return
+      }
+      if (/^@@ /.test(t)) {
+        printCardHeader()
+        return void print(faint('  ' + t))
+      }
+      if (/^\+/.test(t)) {
+        printCardHeader()
+        if (card) card.adds++
+        return void print(diffAdd(t.slice(1)))
+      }
+      if (/^-/.test(t)) {
+        printCardHeader()
+        if (card) card.dels++
+        return void print(diffDel(t.slice(1)))
+      }
       if (t === '') {
-        inRegion = false
+        closeRegion()
         return void print('')
       }
-      if (/^ /.test(t)) return void print(faint('  ' + t.replace(/^ /, '')))
-      inRegion = false // anything else ends the diff region
+      if (/^ /.test(t)) {
+        printCardHeader()
+        return void print(faint('  ' + t.replace(/^ /, '')))
+      }
+      // anything else ends the diff region
+      closeRegion()
     }
     print(line)
   }
@@ -565,9 +737,9 @@ function lineSplitter(onLine) {
 // alive for the entire turn — rendered output lines flow in above it via the
 // renderer. Resolves with the exit code; Ctrl+C kills only the child.
 // FORCE_COLOR/CLICOLOR_FORCE keep the providers' own colors despite the pipe.
-export function runTurn({ selection, prompt, resume, cwd, mode = 'act' }, { onSpawn } = {}) {
+export function runTurn({ selection, prompt, resume, cwd, mode = 'act', options = {} }, { onSpawn, onLine } = {}) {
   const provider = PROVIDERS[selection.provider]
-  const args = provider.args({ prompt, model: selection.model, resume, mode })
+  const args = provider.args({ prompt, model: selection.model, resume, mode, options })
   return new Promise((resolve) => {
     const child = spawn(provider.bin, args, {
       cwd,
@@ -577,7 +749,11 @@ export function runTurn({ selection, prompt, resume, cwd, mode = 'act' }, { onSp
     onSpawn?.(child)
 
     const spinner = startSpinner(provider.codename.toLowerCase(), provider.display)
-    const renderer = createRenderer(provider.id, (line) => spinner.log(line), (status) => spinner.setStatus(status))
+    const print = (line) => {
+      spinner.log(line)
+      if (onLine) onLine(stripAnsi(line).replace(/\s+$/, ''))
+    }
+    const renderer = createRenderer(provider.id, print, (status) => spinner.setStatus(status), { thinking: options.thinking })
     const out = lineSplitter((l) => renderer.stdoutLine(l))
     const err = lineSplitter((l) => renderer.stderrLine(l))
     child.stdout.on('data', (chunk) => out.push(chunk))

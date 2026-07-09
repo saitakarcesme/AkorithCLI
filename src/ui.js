@@ -1,6 +1,10 @@
 // Terminal styling helpers. Zero dependencies — plain ANSI.
 // Palette mirrors the akorith.space /cli page terminal mock: white text at
 // varying opacities on near-black, emerald-400 checkmarks, violet accents.
+// Colors + light/dark adaptation come from src/theme.js (which reads an
+// optional ~/.akorith/theme.json and probes COLORFGBG).
+
+import { palette, palette256, isLightBackground } from './theme.js'
 
 const enabled =
   process.env.NO_COLOR === undefined && (process.stdout.isTTY || process.env.FORCE_COLOR !== undefined)
@@ -22,18 +26,18 @@ export const bold = wrap(1, 22)
 export const italic = wrap(3, 23)
 
 // white at ~90% / ~50% / ~35% over the mock's near-black background
-export const text = fg('#dcdde0', 255)
-export const dim = fg('#85868c', 245)
-export const faint = fg('#5c5d63', 240)
+export const text = fg(palette.text, palette256.text)
+export const dim = fg(palette.dim, palette256.dim)
+export const faint = fg(palette.faint, palette256.faint)
 export const accent = text
 // violet brand pair from the page (violet-400 text, violet-500 cursor)
-export const violet = fg('#a78bfa', 141)
-export const violetDeep = fg('#8b5cf6', 99)
+export const violet = fg(palette.violet, palette256.violet)
+export const violetDeep = fg(isLightBackground ? '#7c3aed' : '#8b5cf6', 99)
 // status colors as the page uses them (Tailwind 400s)
-export const green = fg('#34d399', 42) // emerald-400 — the ✓ lines
-export const red = fg('#f87171', 210)
-export const yellow = fg('#fbbf24', 214)
-export const cyan = fg('#38bdf8', 81) // sky-400 — hero gradient start
+export const green = fg(palette.green, palette256.green) // emerald-400 — the ✓ lines
+export const red = fg(palette.red, palette256.red)
+export const yellow = fg(palette.yellow, palette256.yellow)
+export const cyan = fg(palette.cyan, palette256.cyan) // sky-400 — hero gradient start
 
 export function stripAnsi(s) {
   return String(s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
@@ -47,9 +51,19 @@ function terminalColumns(fallback = 80) {
 // Diff lines rendered as full-width bars: added/written code on an Akorith-green
 // background, removed code on an Akorith-purple background. The bar fills the
 // terminal width so runs of changes read as solid colored blocks, not grey text.
+// On light backgrounds the solid bars are unreadable, so we fall back to
+// foreground-only coloring (green `+` lines, red `-` lines) — still distinct,
+// legible on white.
 function diffBar(sign, content, bg, fg, bg256) {
   const raw = `${sign} ${content}`
   if (!enabled) return raw
+  if (isLightBackground) {
+    // Foreground-only: green for additions, red (reserved here, not for errors)
+    // for deletions would conflict — use a muted purple for deletions on light.
+    const hex = sign === '+' ? palette.green : palette.red
+    const fb = sign === '+' ? palette256.green : palette256.red
+    return fg(hex, fb)(raw)
+  }
   const width = Math.min(terminalColumns(), 120)
   const body = raw.length >= width ? raw.slice(0, width) : raw.padEnd(width)
   if (truecolor) {

@@ -32,6 +32,15 @@ npm install -g .
 ❯ /mode view                                    # read-only; /mode act to work (default)
 ❯ push this commit to origin                    # models drive git/gh directly
 ❯ /connect                                      # see & toggle GitHub, git, npm
+❯ /options                                      # inspect run flags (images, json, search, sandbox)
+❯ /option image ./screenshot.png                # attach an image to future supported turns
+❯ /option search on                             # enable Codex web search for future Codex turns
+❯ /sessions                                     # list saved sessions for this folder
+❯ /resume --last                                # resume the most recent Akorith session
+❯ /fork <session-id>                            # fork a saved session into a fresh branch of work
+❯ /review                                       # browse the diff file-by-file (/, n/p, r)
+❯ /review --uncommitted                         # review staged, unstaged, and untracked changes
+❯ /doctor                                       # diagnose local provider CLIs + global install
 ❯ /model                                        # open the model picker (↑/↓, Enter)
 ❯ /model codex                                  # switch to Codex (Olympus)
 ❯ /model gpt 5.5 high                           # switch via a friendly preset alias
@@ -47,7 +56,46 @@ One-shot mode (scriptable):
 
 ```bash
 akorith -p "summarize the diff" -m claude/haiku
+akorith exec "fix the failing tests" -m codex/gpt-5-codex -C ~/code/app --search
+akorith review --uncommitted -m codex/gpt-5-codex
+akorith resume --last "continue from where we left off"
 ```
+
+When stdin is piped, Akorith treats it as a one-shot prompt or appends it to
+the prompt in a `<stdin>` block, matching the scriptable Codex-style flow.
+
+## Codex-style command surface
+
+Akorith now has native equivalents for the day-to-day Codex CLI surfaces that
+matter when you want to live in one terminal:
+
+| Codex surface | Akorith surface |
+|---|---|
+| `codex <prompt>` / `codex exec` | `akorith <prompt>` / `akorith exec` |
+| `-C, --cd` | `akorith -C <dir>` and `/cd <dir>` |
+| `-i, --image` | `akorith -i <file>` and `/option image <file>` |
+| `--add-dir` | `akorith --add-dir <dir>` and `/option add-dir <dir>` |
+| `--search` | `akorith --search` and `/option search on` |
+| `--json`, `--output-schema`, `-o` | same CLI flags and `/option json/schema/output` |
+| `-s, --sandbox` | same CLI flag and `/option sandbox <mode>` |
+| `-a, --ask-for-approval` | same CLI flag and `/option approval <policy>` |
+| `codex review` | `akorith review` with `--uncommitted`, `--base`, `--commit`, `--title` |
+| `resume/archive/delete/fork` | native Akorith session commands and slash commands |
+| `doctor/update` | `akorith doctor` and `akorith update` |
+
+Codex-only administrative tools are still reachable without leaving Akorith:
+
+```bash
+akorith codex mcp list
+akorith codex plugin list
+akorith codex completion zsh
+akorith codex cloud
+akorith codex apply
+```
+
+Those commands deliberately pass through to the installed Codex CLI because
+they manage Codex-specific config, auth, plugins, MCP servers, cloud tasks, and
+shell completion formats.
 
 ## How it works
 
@@ -58,8 +106,10 @@ akorith -p "summarize the diff" -m claude/haiku
 | Gaia | OpenCode | `opencode run` (continues with `-c`) |
 | Local | Ollama | `ollama run` |
 
-Each provider keeps its own conversation thread for the session; `/new` resets all of
-them. Your last model and mode choices are remembered in `~/.akorith/cli.json`.
+Each provider keeps its own conversation thread for the live session; `/new` resets all of
+them. Akorith also keeps a lightweight session index in `~/.akorith/sessions.json`
+so you can resume, fork, archive, and delete work from the terminal. Your last
+model, mode, and run-option choices are remembered in `~/.akorith/cli.json`.
 Press `⌘M`/`Alt+M` to open the model picker when your terminal passes that key
 through; `/model` opens the same picker everywhere. Use ↑/↓ and Enter to pick,
 or type a number/alias/model spec directly.
@@ -68,6 +118,8 @@ Gaia entries are loaded from `opencode models` so they appear as exact OpenCode
 model IDs such as `opencode-go/glm-5.2` rather than a vague default.
 Long submitted prompts are re-rendered with word wrapping, and the live
 `akoriting` line shows the current high-level phase while a model is working.
+Akorith shows provider-supplied output and high-level phases; it does not expose
+hidden private chain-of-thought from models.
 
 ### Permission modes
 
