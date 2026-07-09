@@ -7,6 +7,7 @@ import {
   headerLines,
   layoutTier,
   normalizeViewport,
+  overlayWindow,
 } from '../src/terminal-screen.js'
 import { visibleLength } from '../src/ui.js'
 
@@ -101,4 +102,13 @@ test('buildFrame reflows compact terminals without horizontal overflow', () => {
     assert.equal(frame.lines.length, Math.max(8, height))
     assert.ok(frame.lines.every((line) => visibleLength(line) === Math.max(20, width)))
   }
+})
+
+test('overlay window keeps the selected row visible on short screens', () => {
+  const lines = ['top', ...Array.from({ length: 20 }, (_, index) => `${index === 15 ? '▸' : ' '} row ${index}`), 'bottom']
+  const visible = overlayWindow(lines, 8)
+  assert.equal(visible.length, 8)
+  assert.equal(visible[0], 'top')
+  assert.equal(visible.at(-1), 'bottom')
+  assert.ok(visible.some((line) => line.includes('▸ row 15')))
 })
