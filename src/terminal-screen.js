@@ -16,8 +16,8 @@ import {
   yellow,
 } from './ui.js'
 
-const MIN_COLUMNS = 32
-const MIN_ROWS = 10
+const MIN_COLUMNS = 20
+const MIN_ROWS = 8
 
 export function normalizeViewport(columns, rows) {
   const width = Math.max(MIN_COLUMNS, Number(columns) || 80)

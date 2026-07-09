@@ -248,7 +248,7 @@ function borderLine({ left, right, label = '', width, color = violet }) {
 }
 
 export function panelLines({ title = '', subtitle = '', lines = [], footer = '', width = Math.min(terminalColumns(), 118), color = violet } = {}) {
-  const safeWidth = Math.max(28, Math.min(width, Math.max(28, terminalColumns())))
+  const safeWidth = Math.max(20, Math.min(width, Math.max(20, terminalColumns())))
   const inner = safeWidth - 4
   const label = [title, subtitle].filter(Boolean).join(' · ')
   const out = [borderLine({ left: '╭', right: '╮', label, width: safeWidth, color })]

@@ -43,7 +43,7 @@ let cachedOpenCodeModels = null
 
 function terminalColumns() {
   const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
-  return Math.max(44, Math.min(Number.isFinite(columns) ? columns : 88, 120))
+  return Math.max(20, Math.min(Number.isFinite(columns) ? columns : 88, 120))
 }
 
 function elideMiddle(value, max) {
@@ -56,7 +56,7 @@ function elideMiddle(value, max) {
 
 function rawTerminalColumns() {
   const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
-  return Math.max(24, Number.isFinite(columns) ? columns : 88)
+  return Math.max(20, Number.isFinite(columns) ? columns : 88)
 }
 
 function displayLength(value) {
