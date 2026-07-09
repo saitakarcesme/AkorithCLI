@@ -15,31 +15,39 @@
 
 ## Feature backlog derived from Claude Code, Codex CLI, and terminal UX conventions
 
-1. Persistent compact Akorith header after a session starts.
-2. Bottom-anchored, fully closed multi-line composer.
-3. Responsive compact/regular/wide layout breakpoints.
-4. A dedicated scrollable transcript viewport between header and composer.
-5. Stable cursor restoration after every repaint and resize.
-6. Multi-line editing with deterministic wrapping inside the composer.
-7. Prompt history navigation with draft restoration.
-8. Paste-safe input handling and visible paste indicators for large blocks.
-9. Composer metadata showing model, permission mode, context, and token totals.
-10. Context/token usage progress meter with warning thresholds.
-11. Working-directory and git branch/status information in the persistent header.
-12. Provider connection/availability indicator in the header.
-13. Queue depth and running-state indicators while a turn is active.
-14. Discoverable shortcut hint row that adapts to terminal width.
-15. Compact fallback UI for terminals below 60 columns or 16 rows.
-16. Overlay viewport constraints with scrolling for model/session/command/review pickers.
-17. Transcript search and jump affordance matching `/timeline` expectations.
-18. Clear interruption/exit guard state without corrupting the composer.
-19. Reduced-motion and monochrome-compatible rendering.
-20. Deterministic screen snapshots across a viewport test matrix.
-21. Screen-reader/plain-output fallback when stdout is not a TTY.
-22. Inline error/status notices that do not displace the composer.
-23. Session title and turn count retained in the header.
-24. Resize debouncing to avoid repaint storms and half-drawn frames.
-25. Cleanup of alternate-screen, cursor, and scroll-region state on every exit path.
+- [x] Persistent compact Akorith header after a session starts.
+- [x] Bottom-anchored, fully closed multi-line composer.
+- [x] Responsive compact/regular/wide layout breakpoints.
+- [x] A dedicated scrollable transcript viewport between header and composer.
+- [x] Stable cursor restoration after every repaint and resize.
+- [x] Multi-line editing with deterministic wrapping inside the composer.
+- [x] Prompt history navigation with draft restoration.
+- [x] Paste-safe input handling and visible paste indicators for large blocks.
+- [x] Composer metadata showing model, permission mode, context, and token totals.
+- [x] Context/token usage progress meter with warning thresholds.
+- [x] Working-directory and git branch/status information in the persistent header.
+- [x] Provider connection/availability indicator in the header.
+- [x] Queue depth and running-state indicators while a turn is active.
+- [x] Discoverable shortcut hint row that adapts to terminal width.
+- [x] Compact fallback UI for terminals below 60 columns or 16 rows.
+- [x] Overlay viewport constraints with scrolling for model/session/command/review pickers.
+- [x] Transcript search and jump affordance matching `/timeline` expectations.
+- [x] Clear interruption/exit guard state without corrupting the composer.
+- [x] Reduced-motion and monochrome-compatible rendering.
+- [x] Deterministic screen snapshots across a viewport test matrix.
+- [x] Screen-reader/plain-output fallback when stdout is not a TTY.
+- [x] Inline error/status notices that do not displace the composer.
+- [x] Session title and turn count retained in the header.
+- [x] Resize debouncing to avoid repaint storms and half-drawn frames.
+- [x] Cleanup of alternate-screen, cursor, and scroll-region state on every exit path.
+
+## Verification completed
+
+- Pure frame matrix: 191 unique viewports, 20×8 through 220×80, across splash, Unicode typing, transcript/spinner, and overlay states.
+- Live PTY: 100×30 conversation and command palette; live resize to 48×14; model picker resized from 100×30 to 40×12 with selection pagination.
+- Provider stream: OpenCode response rendered while header and composer stayed pinned.
+- Shell stream: captured stdout stayed inside the transcript viewport.
+- Visual review: compact, regular, and wide SVG/PNG snapshots inspected for border closure, symmetry, centering, and fixed-bottom placement.
 
 ## Acceptance criteria
 
