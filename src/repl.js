@@ -296,6 +296,11 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   let promptBoxActive = false
   let promptBoxPreludeRows = 0
   const usageTotals = { input: 0, output: 0, total: 0 }
+  const queue = []
+  let busy = false
+  let closing = false
+  let terminalScreen = null
+  let gitHeader = readGitHeaderState(process.cwd())
 
   function resetStarted(next = {}) {
     for (const key of Object.keys(started)) started[key] = Boolean(next[key])
@@ -1700,10 +1705,6 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   // Lines are queued, not dropped: input typed (or piped) while a turn is
   // running becomes the next turn.
-  const queue = []
-  let busy = false
-  let closing = false
-
   function finish() {
     resetCursor()
     console.log(dim('\nAkorith out. Your work stayed on your machine.'))
