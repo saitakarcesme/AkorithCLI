@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { InputEditor } from '../src/input-editor.js'
+import { InputEditor, ScreenInputAdapter } from '../src/input-editor.js'
 
 test('edits Unicode input by visible code points', () => {
   const editor = new InputEditor()
@@ -67,3 +67,23 @@ test('returns explicit global shortcut actions', () => {
   assert.equal(editor.handle('', { name: 'd', ctrl: true }).type, 'eof')
 })
 
+test('screen adapter preserves the readline contract used by the REPL', () => {
+  let renders = 0
+  const adapter = new ScreenInputAdapter({ render: () => renders++ })
+  const submitted = []
+  adapter.on('line', (line) => submitted.push(line))
+  adapter.line = 'hello'
+  adapter.cursor = 5
+  adapter.submit(adapter.line)
+  assert.deepEqual(submitted, ['hello'])
+  assert.ok(renders >= 2)
+})
+
+test('screen adapter supports inline questions', () => {
+  const adapter = new ScreenInputAdapter()
+  let answer = null
+  adapter.question('name', (value) => { answer = value })
+  adapter.submit('renamed session')
+  assert.equal(answer, 'renamed session')
+  assert.equal(adapter.questionCallback, null)
+})
