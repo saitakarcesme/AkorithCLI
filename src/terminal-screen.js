@@ -9,7 +9,9 @@ import {
   green,
   padVisible,
   sliceVisible,
+  splitGraphemes,
   stripAnsi,
+  terminalCellWidth,
   text,
   violet,
   visibleLength,
@@ -84,24 +86,31 @@ export function contextUsageMeter(total, context, width = 8) {
 }
 
 function wrapEditorInput(input, cursor, width) {
-  const chars = [...String(input ?? '')]
+  const chars = splitGraphemes(input)
   const cursorIndex = Math.max(0, Math.min(Number(cursor) || 0, chars.length))
   const rows = [[]]
+  const rowWidths = [0]
   let cursorRow = 0
   let cursorColumn = 0
   for (let index = 0; index <= chars.length; index++) {
     if (index === cursorIndex) {
       cursorRow = rows.length - 1
-      cursorColumn = rows.at(-1).length
+      cursorColumn = rowWidths.at(-1)
     }
     if (index === chars.length) break
     const char = chars[index]
     if (char === '\n') {
       rows.push([])
+      rowWidths.push(0)
       continue
     }
-    if (rows.at(-1).length >= width) rows.push([])
+    const cellWidth = terminalCellWidth(char)
+    if (rowWidths.at(-1) + cellWidth > width) {
+      rows.push([])
+      rowWidths.push(0)
+    }
     rows.at(-1).push(char)
+    rowWidths[rowWidths.length - 1] += cellWidth
   }
   return { rows: rows.map((row) => row.join('')), cursorRow, cursorColumn }
 }
