@@ -300,6 +300,7 @@ export class TerminalScreen {
     this.spinner = ''
     this.started = false
     this.renderPending = false
+    this.renderTimer = null
     this.maxTranscriptRows = 4000
     this.transcriptOffset = 0
   }
@@ -321,6 +322,8 @@ export class TerminalScreen {
     if (!this.started) return
     this.started = false
     this.renderPending = false
+    if (this.renderTimer) clearTimeout(this.renderTimer)
+    this.renderTimer = null
     if (activeScreen === this) activeScreen = null
     this.output.write('\x1b[?25h\x1b[0m\x1b[?1049l')
   }
@@ -406,10 +409,12 @@ export class TerminalScreen {
   scheduleRender() {
     if (!this.started || this.renderPending) return
     this.renderPending = true
-    setImmediate(() => {
+    this.renderTimer = setTimeout(() => {
       this.renderPending = false
+      this.renderTimer = null
       this.renderNow()
-    })
+    }, 16)
+    this.renderTimer.unref?.()
   }
 
   renderNow() {
