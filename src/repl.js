@@ -186,7 +186,7 @@ function resolveModelSpec(input, choices = []) {
 const COMMANDS = [
   '/help', '/models', '/model', '/mode', '/thinking', '/connect', '/options', '/option',
   '/sessions', '/resume', '/fork', '/archive', '/unarchive', '/delete',
-  '/review', '/doctor', '/update', '/cd', '/new', '/clear', '/exit', '/quit',
+  '/review', '/timeline', '/doctor', '/update', '/cd', '/new', '/clear', '/exit', '/quit',
 ]
 
 function uniqueList(values = []) {
@@ -301,6 +301,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   let closing = false
   let terminalScreen = null
   let gitHeader = readGitHeaderState(process.cwd())
+  let chordUntil = 0
 
   function resetStarted(next = {}) {
     for (const key of Object.keys(started)) started[key] = Boolean(next[key])
@@ -1491,6 +1492,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       command('/resume --last', 'resume a saved session'),
       command('/fork <id>', 'fork a session into a fresh branch of work'),
       command('/review', 'browse and review the current diff file by file'),
+      command('/timeline', 'browse, search, and jump through transcript rows'),
       command('/doctor', 'diagnose local CLIs, auth helpers, and global install'),
       command('/connect', 'show and toggle GitHub, git, npm integrations'),
       command('/cd <dir>', 'change the active working directory'),
@@ -1530,6 +1532,8 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     if (awaitingReview) return // review browser is keypress-driven
     if (!input) return
 
+    if (terminalScreen?.overlay && !input.startsWith('/timeline')) terminalScreen.setOverlay(null)
+
     if (input === '/exit' || input === '/quit') {
       queue.length = 0
       rl.close()
@@ -1537,6 +1541,35 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     }
     if (input === '/clear') {
       renderSplash()
+      return
+    }
+    if (input === '/timeline' || input.startsWith('/timeline ')) {
+      const rest = input.slice(9).trim()
+      if (!terminalScreen) {
+        console.log(dim('Timeline browsing is available in an interactive TTY.'))
+        return
+      }
+      if (!rest) {
+        terminalScreen.setOverlay(terminalScreen.timelineLines())
+        terminalScreen.setNotice(dim('Use /timeline <row>, /timeline search <text>, or /timeline tail.'))
+        return
+      }
+      if (rest === 'tail') {
+        terminalScreen.transcriptOffset = 0
+        terminalScreen.setOverlay(null)
+        terminalScreen.setNotice('')
+        return
+      }
+      if (rest.startsWith('search ')) {
+        terminalScreen.setOverlay(null)
+        terminalScreen.searchTranscript(rest.slice(7).trim())
+        return
+      }
+      if (/^\d+$/.test(rest)) {
+        terminalScreen.jumpTo(Number(rest) - 1)
+        return
+      }
+      terminalScreen.setNotice(red('Usage: /timeline <row|tail|search text>'))
       return
     }
     if (input === '/help') {
@@ -1988,6 +2021,25 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       // ctrl+p opens the palette.
       if (key.name === 'p' && key.ctrl) {
         showPalette()
+        return
+      }
+      if (terminalScreen && key.name === 'x' && key.ctrl) {
+        chordUntil = Date.now() + 1500
+        terminalScreen.setNotice(faint('Ctrl+X … press G for timeline'))
+        return
+      }
+      if (terminalScreen && Date.now() < chordUntil && (key.name === 'g' || str === 'g')) {
+        chordUntil = 0
+        terminalScreen.setOverlay(terminalScreen.timelineLines())
+        terminalScreen.setNotice(dim('Timeline open · type /timeline <row|tail|search text>.'))
+        return
+      }
+      if (terminalScreen && key.name === 'pageup') {
+        terminalScreen.scroll(Math.max(1, terminalScreen.dimensions().height - 8))
+        return
+      }
+      if (terminalScreen && key.name === 'pagedown') {
+        terminalScreen.scroll(-Math.max(1, terminalScreen.dimensions().height - 8))
         return
       }
       if (key.name === 'm' && key.meta) {

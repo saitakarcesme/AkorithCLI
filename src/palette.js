@@ -21,6 +21,7 @@ export const COMMAND_CATALOG = [
   { cmd: '/unarchive', title: 'Unarchive session', desc: 'Restore an archived session' },
   { cmd: '/delete', title: 'Delete session', desc: 'Permanently remove a saved session' },
   { cmd: '/review', title: 'Review current diff', desc: 'Ask the model to review staged/uncommitted' },
+  { cmd: '/timeline', title: 'Browse transcript', desc: 'Jump to an output row or search the current transcript' },
   { cmd: '/doctor', title: 'Diagnose environment', desc: 'Check local CLIs, auth, global install' },
   { cmd: '/update', title: 'Update Akorith', desc: 'Reinstall akorith from this repo/npm' },
   { cmd: '/cd <dir>', title: 'Change directory', desc: 'Switch the active working directory' },
