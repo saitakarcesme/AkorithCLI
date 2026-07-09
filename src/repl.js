@@ -366,24 +366,74 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     else bootNotice = yellow(`Session not found: ${initialSessionId}`)
   }
 
-  rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: currentPrompt(),
-    completer(line) {
-      if (line.startsWith('/model ')) {
-        const partial = line.slice(7)
-        const specs = Object.keys(PROVIDERS).filter((id) => available[id])
-        const hits = specs.filter((s) => s.startsWith(partial)).map((s) => '/model ' + s)
-        return [hits.length ? hits : [], line]
-      }
-      if (line.startsWith('/')) {
-        const hits = COMMANDS.filter((c) => c.startsWith(line))
-        return [hits.length ? hits : COMMANDS, line]
-      }
-      return [[], line]
-    },
-  })
+  function completionCandidates(line) {
+    if (line.startsWith('/model ')) {
+      const partial = line.slice(7)
+      const specs = Object.keys(PROVIDERS).filter((id) => available[id])
+      return specs.filter((spec) => spec.startsWith(partial)).map((spec) => '/model ' + spec)
+    }
+    if (line.startsWith('/')) {
+      const hits = COMMANDS.filter((command) => command.startsWith(line))
+      return hits.length ? hits : COMMANDS
+    }
+    return []
+  }
+
+  function completeEditor(line) {
+    const candidates = completionCandidates(line)
+    if (!candidates.length) return null
+    if (candidates.length === 1) return { value: candidates[0] + (candidates[0].includes(' ') ? '' : ' '), candidates }
+    let prefix = candidates[0]
+    for (const candidate of candidates.slice(1)) {
+      while (prefix && !candidate.startsWith(prefix)) prefix = prefix.slice(0, -1)
+    }
+    return { value: prefix.length > line.length ? prefix : line, candidates }
+  }
+
+  const nativeConsole = {
+    log: console.log.bind(console),
+    error: console.error.bind(console),
+    clear: console.clear.bind(console),
+  }
+  const useFullScreen = process.stdin.isTTY && process.stdout.isTTY && process.env.TERM !== 'dumb' && process.env.AKORITH_NO_FULLSCREEN !== '1'
+  if (useFullScreen) {
+    const editor = new InputEditor({ complete: completeEditor })
+    terminalScreen = new TerminalScreen({
+      state: () => ({
+        version,
+        model: formatModel(selection),
+        mode,
+        cwd: homeRelative(process.cwd()),
+        branch: gitHeader.branch,
+        dirty: gitHeader.dirty,
+        session: activeSession?.name || activeSession?.id || 'new session',
+        busy: Boolean(activeChild || busy),
+        connected: Boolean(available[selection.provider]),
+        input: rl?.line || '',
+        cursor: rl?.cursor || 0,
+        usage: `${formatUsageCount(usageTotals.total)} tokens`,
+        context: contextWindowFor(selection),
+        queue: queue.length,
+      }),
+    })
+    rl = new ScreenInputAdapter({ editor, render: () => terminalScreen?.scheduleRender() })
+    console.log = (...args) => terminalScreen.append(...args)
+    console.error = (...args) => terminalScreen.append(red(args.map(String).join(' ')))
+    console.clear = () => terminalScreen.clear()
+    setTerminalAdapter(terminalScreen)
+    process.stdin.setRawMode?.(true)
+    process.stdin.resume()
+    terminalScreen.start()
+  } else {
+    rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: currentPrompt(),
+      completer(line) {
+        return [completionCandidates(line), line]
+      },
+    })
+  }
 
   tintCursor()
   renderSplash({ tip: bootNotice ? stripAnsi(bootNotice) : null })
@@ -416,6 +466,13 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     splashActive = true
     promptBoxActive = false
     refreshPrompt()
+    if (terminalScreen) {
+      terminalScreen.setOverlay(null)
+      terminalScreen.clear()
+      if (tip) terminalScreen.setNotice(dim(tip))
+      terminalScreen.scheduleRender()
+      return
+    }
     const { lines } = grokSplashLines({
       version,
       tip: tip || 'Use /timeline or ctrl+x g to jump to specific messages',
@@ -431,6 +488,11 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   function renderPromptBox() {
     if (!process.stdout.isTTY) return false
+    if (terminalScreen) {
+      promptBoxActive = true
+      terminalScreen.scheduleRender()
+      return true
+    }
     promptBoxActive = true
     refreshPrompt()
     const { lines } = grokInputBoxLines({
@@ -443,6 +505,11 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   function clearPromptBox({ afterSubmit = false } = {}) {
     if (!process.stdout.isTTY || !promptBoxActive) return
+    if (terminalScreen) {
+      promptBoxActive = false
+      terminalScreen.scheduleRender()
+      return
+    }
     readline.moveCursor(process.stdout, 0, -(promptBoxPreludeRows + (afterSubmit ? 1 : 0)))
     readline.cursorTo(process.stdout, 0)
     readline.clearScreenDown(process.stdout)
@@ -452,6 +519,10 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   function promptIdle() {
     refreshPrompt()
+    if (terminalScreen) {
+      terminalScreen.scheduleRender()
+      return
+    }
     if (awaitingModelPick || awaitingSessionPick || awaitingPalette || awaitingReview) {
       promptNow(true)
       return
@@ -487,7 +558,9 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function printStatus() {
+    gitHeader = readGitHeaderState(process.cwd())
     refreshPrompt()
+    terminalScreen?.scheduleRender()
   }
 
   function printPanelBlock(options) {
@@ -595,12 +668,22 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   function printModelPicker() {
     const lines = modelPickerLines()
+    if (terminalScreen) {
+      terminalScreen.setOverlay(lines)
+      modelPickerRows = lines.length
+      return
+    }
     for (const line of lines) console.log(line)
     modelPickerRows = lines.length
   }
 
   function clearModelPicker() {
     if (!process.stdout.isTTY || !modelPickerRows) return
+    if (terminalScreen) {
+      terminalScreen.setOverlay(null)
+      modelPickerRows = 0
+      return
+    }
     readline.clearLine(process.stdout, 0)
     readline.cursorTo(process.stdout, 0)
     readline.moveCursor(process.stdout, 0, -modelPickerRows)
@@ -614,6 +697,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function closeModelPicker() {
+    if (terminalScreen) terminalScreen.setOverlay(null)
     awaitingModelPick = false
     modelPickerRows = 0
     modelPickChoices = []
@@ -695,12 +779,22 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   function printSessionPicker() {
     const lines = sessionPickerLines()
+    if (terminalScreen) {
+      terminalScreen.setOverlay(lines)
+      sessionPickerRows = lines.length
+      return
+    }
     for (const line of lines) console.log(line)
     sessionPickerRows = lines.length
   }
 
   function clearSessionPicker() {
     if (!process.stdout.isTTY || !sessionPickerRows) return
+    if (terminalScreen) {
+      terminalScreen.setOverlay(null)
+      sessionPickerRows = 0
+      return
+    }
     readline.clearLine(process.stdout, 0)
     readline.cursorTo(process.stdout, 0)
     readline.moveCursor(process.stdout, 0, -sessionPickerRows)
@@ -716,6 +810,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function closeSessionPicker() {
+    if (terminalScreen) terminalScreen.setOverlay(null)
     awaitingSessionPick = false
     sessionPickerRows = 0
     sessionPickChoices = []
@@ -854,12 +949,22 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   function printPalette() {
     const lines = paletteLines()
+    if (terminalScreen) {
+      terminalScreen.setOverlay(lines)
+      paletteRows = lines.length
+      return
+    }
     for (const line of lines) console.log(line)
     paletteRows = lines.length
   }
 
   function clearPalette() {
     if (!process.stdout.isTTY || !paletteRows) return
+    if (terminalScreen) {
+      terminalScreen.setOverlay(null)
+      paletteRows = 0
+      return
+    }
     readline.clearLine(process.stdout, 0)
     readline.cursorTo(process.stdout, 0)
     readline.moveCursor(process.stdout, 0, -paletteRows)
@@ -875,6 +980,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function closePalette() {
+    if (terminalScreen) terminalScreen.setOverlay(null)
     awaitingPalette = false
     paletteRows = 0
     paletteChoices = []
@@ -1057,12 +1163,22 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   function printReview() {
     const lines = reviewLines()
+    if (terminalScreen) {
+      terminalScreen.setOverlay(lines)
+      reviewRows = lines.length
+      return
+    }
     for (const line of lines) console.log(line)
     reviewRows = lines.length
   }
 
   function clearReview() {
     if (!process.stdout.isTTY || !reviewRows) return
+    if (terminalScreen) {
+      terminalScreen.setOverlay(null)
+      reviewRows = 0
+      return
+    }
     readline.clearLine(process.stdout, 0)
     readline.cursorTo(process.stdout, 0)
     readline.moveCursor(process.stdout, 0, -reviewRows)
@@ -1076,6 +1192,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function closeReview() {
+    if (terminalScreen) terminalScreen.setOverlay(null)
     awaitingReview = false
     reviewRows = 0
     reviewAllFiles = []
@@ -1707,7 +1824,18 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   // running becomes the next turn.
   function finish() {
     resetCursor()
-    console.log(dim('\nAkorith out. Your work stayed on your machine.'))
+    if (terminalScreen) {
+      setTerminalAdapter(null)
+      process.stdin.setRawMode?.(false)
+      terminalScreen.stop()
+      terminalScreen = null
+      console.log = nativeConsole.log
+      console.error = nativeConsole.error
+      console.clear = nativeConsole.clear
+      nativeConsole.log(dim('Akorith out. Your work stayed on your machine.'))
+    } else {
+      console.log(dim('\nAkorith out. Your work stayed on your machine.'))
+    }
     process.exit(0)
   }
 
@@ -1728,7 +1856,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   if (process.stdin.isTTY) {
-    readline.emitKeypressEvents(process.stdin, rl)
+    readline.emitKeypressEvents(process.stdin, terminalScreen ? undefined : rl)
     process.stdin.on('keypress', (str, key = {}) => {
       // ctrl+t cycles reasoning visibility: hide → minimal → show → hide.
       // Works whether idle or mid-turn (applies to the next turn).
@@ -1738,6 +1866,11 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         const next = order[(order.indexOf(thinking) + 1) % order.length]
         thinking = next
         persist({ thinking })
+        if (terminalScreen) {
+          terminalScreen.setNotice(faint('reasoning ') + violet(thinking))
+          terminalScreen.scheduleRender()
+          return
+        }
         readline.clearLine(process.stdout, 0)
         readline.cursorTo(process.stdout, 0)
         console.log(faint('reasoning ') + violet(thinking))
@@ -1810,6 +1943,16 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
           return
         }
         if (key.name === 'return') { runPalette(); return }
+        if (terminalScreen) {
+          if (key.name === 'backspace') paletteQuery = paletteQuery.slice(0, -1)
+          else if (key.name === 'u' && key.ctrl) paletteQuery = ''
+          else if (str && str.length === 1 && !key.ctrl && !key.meta) paletteQuery += str
+          else return
+          paletteChoices = filterCatalog(paletteQuery)
+          paletteSelected = 0
+          redrawPalette()
+          return
+        }
         // let printable chars fall through to readline's line editor
         return
       }
@@ -1838,16 +1981,33 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         showPalette()
         return
       }
-      if (!(key.name === 'm' && key.meta)) return
-      if (activeChild || busy || closing || awaitingModelPick) return
-      if (rl.line) {
-        process.stdout.write('\x07')
+      if (key.name === 'm' && key.meta) {
+        if (activeChild || busy || closing || awaitingModelPick) return
+        if (rl.line) {
+          process.stdout.write('\x07')
+          return
+        }
+        if (terminalScreen) {
+          queue.push('/model')
+          void pump()
+          return
+        }
+        readline.clearLine(process.stdout, 0)
+        readline.cursorTo(process.stdout, 0)
+        queue.push('/model')
+        void pump()
         return
       }
-      readline.clearLine(process.stdout, 0)
-      readline.cursorTo(process.stdout, 0)
-      queue.push('/model')
-      void pump()
+      if (!terminalScreen) return
+      const action = rl.handleKeypress(str, key)
+      if (action.type === 'submit') rl.submit(action.value)
+      else if (action.type === 'palette') showPalette()
+      else if (action.type === 'clear') renderSplash()
+      else if (action.type === 'interrupt') rl.emit('SIGINT')
+      else if (action.type === 'eof') rl.close()
+      else if (action.type === 'escape' && rl.line) { rl.line = ''; rl.cursor = 0 }
+      else if (action.type === 'bell') process.stdout.write('\x07')
+      terminalScreen.scheduleRender()
     })
   }
 
@@ -1855,7 +2015,10 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     if (splashActive) {
       splashActive = false
       promptBoxActive = false
-      if (process.stdout.isTTY) {
+      if (terminalScreen) {
+        terminalScreen.setNotice('')
+        terminalScreen.clear()
+      } else if (process.stdout.isTTY) {
         readline.cursorTo(process.stdout, 0, 0)
         readline.clearScreenDown(process.stdout)
       }
@@ -1892,6 +2055,14 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   // Live reflow on resize: repaint active overlays and the Grok-style splash
   // screen in place. During a turn the pinned spinner owns the active line.
   function onResize() {
+    if (terminalScreen) {
+      if (awaitingModelPick) printModelPicker()
+      else if (awaitingSessionPick) printSessionPicker()
+      else if (awaitingPalette) printPalette()
+      else if (awaitingReview) printReview()
+      else terminalScreen.renderNow()
+      return
+    }
     if (awaitingModelPick) {
       redrawModelPicker()
       return
