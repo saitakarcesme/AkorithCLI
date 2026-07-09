@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="488" height="370" viewBox="0 0 488 370">
+  <rect width="100%" height="100%" rx="18" fill="#171719"/>
+  <rect x="0" y="0" width="100%" height="42" rx="18" fill="#252529"/>
+  <rect x="0" y="24" width="100%" height="18" fill="#252529"/>
+  <circle cx="24" cy="21" r="6" fill="#ff5f57"/>
+  <circle cx="44" cy="21" r="6" fill="#febc2e"/>
+  <circle cx="64" cy="21" r="6" fill="#28c840"/>
+  <text x="88" y="27" fill="#a1a1aa" font-family="Menlo, Monaco, monospace" font-size="13">Akorith CLI · 48×14</text>
+  <g font-family="Menlo, Monaco, 'Courier New', monospace" font-size="15" font-weight="500"><text x="24" y="82" fill="#c4b5fd" xml:space="preserve">AKORITH · gaia · open…e/big-pickle ● ready      </text>
+<text x="24" y="102" fill="#a1a1aa" xml:space="preserve">────────────────────────────────────────────────</text>
+<text x="24" y="122" fill="#a1a1aa" xml:space="preserve">                                                </text>
+<text x="24" y="142" fill="#d4d4d8" xml:space="preserve">                                                </text>
+<text x="24" y="162" fill="#d4d4d8" xml:space="preserve">                    AKORITH                     </text>
+<text x="24" y="182" fill="#d4d4d8" xml:space="preserve">                Agent workspace                 </text>
+<text x="24" y="202" fill="#d4d4d8" xml:space="preserve">                                                </text>
+<text x="24" y="222" fill="#d4d4d8" xml:space="preserve">            › Start typing to begin             </text>
+<text x="24" y="242" fill="#d4d4d8" xml:space="preserve">       / help · model · sessions · review       </text>
+<text x="24" y="262" fill="#d4d4d8" xml:space="preserve">╭ Message ─────────────────────────────────────╮</text>
+<text x="24" y="282" fill="#d4d4d8" xml:space="preserve">│ › Responsive composer keeps this text inside │</text>
+<text x="24" y="302" fill="#d4d4d8" xml:space="preserve">│    every border 🙂                           │</text>
+<text x="24" y="322" fill="#d4d4d8" xml:space="preserve">╰──────────────────────────────────────────────╯</text>
+<text x="24" y="342" fill="#d4d4d8" xml:space="preserve">gaia · open…e/big-pickle · act · 18,420 tokens  </text></g>
+</svg>
