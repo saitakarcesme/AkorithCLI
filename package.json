@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "test:ui": "node --test test/ui.test.js test/input-editor.test.js test/terminal-screen.test.js"
+    "test:ui": "node --test test/ui.test.js test/input-editor.test.js test/terminal-screen.test.js",
+    "snapshot:ui": "node scripts/render-ui-snapshot.js"
   },
   "bin": {
     "akorith": "bin/akorith.js",
