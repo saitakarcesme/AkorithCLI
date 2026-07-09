@@ -11,7 +11,7 @@ import {
 import { visibleLength } from '../src/ui.js'
 
 test('normalizes unusably small terminal dimensions', () => {
-  assert.deepEqual(normalizeViewport(10, 2), { width: 32, height: 10 })
+  assert.deepEqual(normalizeViewport(10, 2), { width: 20, height: 8 })
 })
 
 test('selects stable responsive layout tiers', () => {
@@ -88,7 +88,7 @@ test('buildFrame keeps composer anchored after transcript growth', () => {
 })
 
 test('buildFrame reflows compact terminals without horizontal overflow', () => {
-  for (const [width, height] of [[32, 10], [40, 12], [52, 16], [63, 40]]) {
+  for (const [width, height] of [[20, 8], [32, 10], [40, 12], [52, 16], [63, 40]]) {
     const frame = buildFrame({
       width,
       height,
@@ -98,7 +98,7 @@ test('buildFrame reflows compact terminals without horizontal overflow', () => {
       cursor: 70,
       transcript: ['output ' + 'x'.repeat(200)],
     })
-    assert.equal(frame.lines.length, Math.max(10, height))
-    assert.ok(frame.lines.every((line) => visibleLength(line) === Math.max(32, width)))
+    assert.equal(frame.lines.length, Math.max(8, height))
+    assert.ok(frame.lines.every((line) => visibleLength(line) === Math.max(20, width)))
   }
 })
