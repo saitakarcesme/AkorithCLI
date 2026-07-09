@@ -8,6 +8,7 @@ import {
   layoutTier,
   normalizeViewport,
   overlayWindow,
+  TerminalScreen,
 } from '../src/terminal-screen.js'
 import { visibleLength } from '../src/ui.js'
 
@@ -111,4 +112,31 @@ test('overlay window keeps the selected row visible on short screens', () => {
   assert.equal(visible[0], 'top')
   assert.equal(visible.at(-1), 'bottom')
   assert.ok(visible.some((line) => line.includes('▸ row 15')))
+})
+
+test('buildFrame can show older transcript rows without moving the composer', () => {
+  const transcript = Array.from({ length: 40 }, (_, index) => `event ${index}`)
+  const latest = buildFrame({ width: 70, height: 20, transcript, transcriptOffset: 0 })
+  const older = buildFrame({ width: 70, height: 20, transcript, transcriptOffset: 20 })
+  assert.ok(latest.lines.some((line) => line.includes('event 39')))
+  assert.ok(older.lines.some((line) => line.includes('event 19')))
+  assert.equal(latest.cursorRow, older.cursorRow)
+})
+
+test('terminal timeline can jump, search, and return to the tail', () => {
+  const writes = []
+  const output = { isTTY: true, columns: 60, rows: 18, write: (value) => writes.push(value) }
+  const screen = new TerminalScreen({ output })
+  screen.start()
+  screen.append('alpha\nbeta target\ngamma')
+  assert.equal(screen.searchTranscript('target'), 1)
+  assert.equal(screen.transcriptOffset, 1)
+  screen.jumpTo(0)
+  assert.equal(screen.transcriptOffset, 2)
+  screen.scroll(-99)
+  assert.equal(screen.transcriptOffset, 0)
+  assert.ok(screen.timelineLines().some((line) => line.includes('beta target')))
+  screen.stop()
+  assert.ok(writes.some((value) => value.includes('\x1b[?1049h')))
+  assert.ok(writes.some((value) => value.includes('\x1b[?1049l')))
 })
