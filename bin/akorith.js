@@ -46,13 +46,14 @@ Common options:
   --json, --output-schema <file>       structured Codex output
   -o, --output <file>                  write last response for supported providers
   -s, --sandbox <mode>                 read-only, workspace-write, or danger-full-access
-  -a, --ask-for-approval <policy>      untrusted, on-request, on-failure, or never
+  -a, --ask-for-approval <policy>      accepted for compatibility where providers support it
   -c, --config <key=value>             pass Codex config override(s)
   --version                            print version
 
 Model specs: <provider>[/<model>] with provider one of claude, codex, opencode, ollama.
 OpenCode exact ids also work as -m opencode-go/glm-5.2.
-Inside the workspace: /model to switch, /options for run flags, /help for everything else.`)
+Inside the workspace: Grok Build-style start screen, clean message flow, /model to switch,
+/options for run flags, /help for everything else.`)
 }
 
 function die(message) {
