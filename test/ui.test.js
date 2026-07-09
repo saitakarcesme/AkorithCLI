@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   fitText, grokInputBoxLines, grokInputPrompt, grokSplashLines, panelLines,
-  stripAnsi, userMessageLines, visibleLength, wrapWords,
+  setTerminalAdapter, startSpinner, stripAnsi, userMessageLines, visibleLength, wrapWords,
 } from '../src/ui.js'
 
 test('wrapWords elides overlong tokens instead of splitting words', () => {
@@ -12,6 +12,24 @@ test('wrapWords elides overlong tokens instead of splitting words', () => {
   assert.ok(lines.every((line) => visibleLength(line) <= 24))
   assert.ok(lines.some((line) => line.includes('…')))
   assert.ok(!lines.some((line) => line === token.slice(0, 24)))
+})
+
+test('spinner renders through the full-screen adapter without raw cursor writes', () => {
+  const events = []
+  setTerminalAdapter({
+    append: (line) => events.push(['line', stripAnsi(line)]),
+    setSpinner: (line) => events.push(['spinner', stripAnsi(line)]),
+  })
+  const spinner = startSpinner('olympus', 'Codex')
+  spinner.setStatus('reading files')
+  spinner.log('provider output')
+  spinner.stop()
+  setTerminalAdapter(null)
+
+  assert.ok(events.some(([kind, value]) => kind === 'spinner' && value.includes('akoriting')))
+  assert.ok(events.some(([kind, value]) => kind === 'spinner' && value.includes('reading files')))
+  assert.ok(events.some(([kind, value]) => kind === 'line' && value === 'provider output'))
+  assert.deepEqual(events.at(-1), ['spinner', ''])
 })
 
 test('panelLines keeps every rendered row inside the requested width', () => {
