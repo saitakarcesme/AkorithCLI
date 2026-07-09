@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Akorith CLI — the Agent OS for your terminal. Orchestrate Claude, Codex, and OpenCode from one prompt, no API keys.",
   "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:ui": "node --test test/ui.test.js test/input-editor.test.js test/terminal-screen.test.js"
+  },
   "bin": {
     "akorith": "bin/akorith.js",
     "update": "bin/update.js"
