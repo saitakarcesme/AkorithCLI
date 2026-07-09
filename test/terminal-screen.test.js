@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   buildFrame,
   composerLayout,
+  contextUsageMeter,
   fitScreenLine,
   headerLines,
   layoutTier,
@@ -139,4 +140,12 @@ test('terminal timeline can jump, search, and return to the tail', () => {
   screen.stop()
   assert.ok(writes.some((value) => value.includes('\x1b[?1049h')))
   assert.ok(writes.some((value) => value.includes('\x1b[?1049l')))
+})
+
+test('context usage meter reports thresholds without exceeding its width', () => {
+  assert.equal(contextUsageMeter(0, '200k', 5), 'ctx [░░░░░] 0%')
+  assert.equal(contextUsageMeter(100000, '200k', 5), 'ctx [███░░] 50%')
+  assert.ok(contextUsageMeter(170000, '200k', 5).endsWith('%!'))
+  assert.ok(contextUsageMeter(195000, '200k', 5).endsWith('%⚠'))
+  assert.equal(contextUsageMeter(500, 'provider', 5), 'ctx provider')
 })
