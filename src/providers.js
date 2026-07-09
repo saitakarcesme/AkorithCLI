@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import {
   startSpinner, stripAnsi, text as bright, dim, faint, green, red, violet, bold, diffAdd, diffDel,
+  fitText, terminalColumns, wrapWords,
 } from './ui.js'
 import { highlight, normalizeLang } from './highlight.js'
 import { toolCardHeader, toolCardBody } from './toolcard.js'
@@ -58,7 +59,9 @@ export const PROVIDERS = {
       if (options.outputSchema) args.push('--output-schema', options.outputSchema)
       if (options.json) args.push('--json')
       if (options.outputFile) args.push('-o', options.outputFile)
-      if (options.approval && !resume) args.push('-a', options.approval)
+      // Codex CLI 0.142 removed the old approval flag from `codex exec`.
+      // Keep accepting Akorith's option for cross-provider config, but do not
+      // forward unsupported flags that make one-shot runs exit with code 2.
       if (options.oss && !resume) args.push('--oss')
       if (options.localProvider && !resume) args.push('--local-provider', options.localProvider)
       if (options.dangerBypass) args.push('--dangerously-bypass-approvals-and-sandbox')
@@ -257,6 +260,7 @@ export function formatModel(selection) {
 // so the animated status line stays pinned at the bottom for the whole turn.
 function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
   const thinkingMode = opts.thinking || 'hide'
+  const reportUsage = typeof opts.onUsage === 'function' ? opts.onUsage : () => {}
   if (providerId === 'codex') {
     // codex exec: stdout = final answer only; stderr = the full event log
     // (version/workdir preamble, `user` echo, `codex` messages, `exec` blocks,
@@ -387,8 +391,7 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
           }
         } else if (block === 'tokens' && plain) {
           // Capture token accounting for the closing footer (was dropped before).
-          const m = plain.match(/(\d[\d,]*)\s+tokens?/i) || plain.match(/(\d[\d,]*)/)
-          if (m) tokenReport = m[1]
+          tokenReport = parseTokenUsage(plain) || tokenReport
           block = 'suppress'
         }
       },
@@ -398,7 +401,8 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
           for (const line of finalAnswer) flow(line)
         }
         if (tokenReport) {
-          print(faint('  · ') + dim('tokens ' + tokenReport))
+          reportUsage(tokenReport)
+          print(faint('  · ') + dim('tokens ' + formatTokenCount(tokenReport.total || tokenReport.input + tokenReport.output)))
         }
       },
     }
@@ -441,6 +445,36 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
   }
 }
 
+function parseTokenUsage(line) {
+  const text = stripAnsi(line).replace(/\s+/g, ' ').trim()
+  if (!text) return null
+  const usage = { input: 0, output: 0, total: 0 }
+  const read = (value) => Number(String(value).replace(/[^\d]/g, '')) || 0
+  const patterns = [
+    ['input', /(?:input|prompt)\D+(\d[\d,]*)/i],
+    ['input', /(\d[\d,]*)\s+(?:input|prompt)\b/i],
+    ['output', /(?:output|completion)\D+(\d[\d,]*)/i],
+    ['output', /(\d[\d,]*)\s+(?:output|completion)\b/i],
+    ['total', /(?:total|used)\D+(\d[\d,]*)/i],
+    ['total', /(\d[\d,]*)\s+tokens?\b/i],
+  ]
+  for (const [key, pattern] of patterns) {
+    const match = text.match(pattern)
+    if (match) usage[key] = Math.max(usage[key], read(match[1]))
+  }
+  if (!usage.total && !usage.input && !usage.output) {
+    const match = text.match(/(\d[\d,]*)/)
+    if (match) usage.total = read(match[1])
+  }
+  if (!usage.total && (usage.input || usage.output)) usage.total = usage.input + usage.output
+  return usage.total || usage.input || usage.output ? usage : null
+}
+
+function formatTokenCount(value) {
+  const number = Number(value) || 0
+  return number.toLocaleString('en-US')
+}
+
 function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
   let lastBlank = true
   let suppressListingOutput = false
@@ -481,7 +515,9 @@ function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
       lastBlank = true
       return
     }
-    print(line)
+    const raw = stripAnsi(line)
+    const aligned = /^\s/.test(raw) || /\x1b\[48;/.test(String(line)) ? line : `    ${line}`
+    print(aligned)
     lastBlank = false
   }
   const emitDiffAware = diffAwareLine(emitPlain)
@@ -548,39 +584,21 @@ function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
 }
 
 function terminalWidth() {
-  const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
+  const columns = terminalColumns(88)
   return Math.max(52, Math.min(Number.isFinite(columns) ? columns : 88, 110))
 }
 
 function emitWrappedParagraph(line, emit) {
   const text = cleanMarkdownText(line)
-  for (const part of wrapText(text, terminalWidth())) emit(bright(part))
+  for (const part of wrapWords(text, terminalWidth())) emit(bright(part))
 }
 
 function emitWrappedBullet(line, emit) {
-  const parts = wrapText(cleanMarkdownText(line), terminalWidth() - 4)
+  const parts = wrapWords(cleanMarkdownText(line), terminalWidth() - 4)
   parts.forEach((part, i) => {
     const prefix = i === 0 ? violet('  • ') : faint('    ')
     emit(prefix + dim(part))
   })
-}
-
-function wrapText(text, width) {
-  const words = text.replace(/\s+/g, ' ').trim().split(' ')
-  const lines = []
-  let line = ''
-  for (const word of words) {
-    if (!line) {
-      line = word
-    } else if (stripAnsi(line).length + 1 + word.length <= width) {
-      line += ' ' + word
-    } else {
-      lines.push(line)
-      line = word
-    }
-  }
-  if (line) lines.push(line)
-  return lines.length ? lines : ['']
 }
 
 function cleanMarkdownText(line) {
@@ -613,10 +631,7 @@ function isListingOutputLine(line) {
 function compactCommand(command, max = 110) {
   const oneLine = command.replace(/\s+/g, ' ').trim()
   if (oneLine.length <= max) return oneLine
-  if (max <= 18) return oneLine.slice(0, max)
-  const head = Math.max(8, Math.floor(max * 0.68))
-  const tail = Math.max(6, max - head - 5)
-  return `${oneLine.slice(0, head)} ... ${oneLine.slice(-tail)}`
+  return fitText(oneLine, max, { middle: true })
 }
 
 // Print raw provider output, but colorize unified-diff regions: once a real
@@ -737,14 +752,16 @@ function lineSplitter(onLine) {
 // alive for the entire turn — rendered output lines flow in above it via the
 // renderer. Resolves with the exit code; Ctrl+C kills only the child.
 // FORCE_COLOR/CLICOLOR_FORCE keep the providers' own colors despite the pipe.
-export function runTurn({ selection, prompt, resume, cwd, mode = 'act', options = {} }, { onSpawn, onLine } = {}) {
+export function runTurn({ selection, prompt, resume, cwd, mode = 'act', options = {} }, { onSpawn, onLine, onUsage } = {}) {
   const provider = PROVIDERS[selection.provider]
   const args = provider.args({ prompt, model: selection.model, resume, mode, options })
   return new Promise((resolve) => {
+    const env = { ...process.env, FORCE_COLOR: '1', CLICOLOR_FORCE: '1' }
+    delete env.NO_COLOR
     const child = spawn(provider.bin, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '1', CLICOLOR_FORCE: '1' },
+      env,
     })
     onSpawn?.(child)
 
@@ -753,7 +770,7 @@ export function runTurn({ selection, prompt, resume, cwd, mode = 'act', options 
       spinner.log(line)
       if (onLine) onLine(stripAnsi(line).replace(/\s+$/, ''))
     }
-    const renderer = createRenderer(provider.id, print, (status) => spinner.setStatus(status), { thinking: options.thinking })
+    const renderer = createRenderer(provider.id, print, (status) => spinner.setStatus(status), { thinking: options.thinking, onUsage })
     const out = lineSplitter((l) => renderer.stdoutLine(l))
     const err = lineSplitter((l) => renderer.stderrLine(l))
     child.stdout.on('data', (chunk) => out.push(chunk))
