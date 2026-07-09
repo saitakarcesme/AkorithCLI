@@ -11,6 +11,11 @@ const colorCapable =
 const enabled = process.env.NO_COLOR === undefined && colorCapable
 const brandEnabled = process.env.AKORITH_MONO !== '1' && colorCapable
 const truecolor = /truecolor|24bit/i.test(process.env.COLORTERM || '')
+let terminalAdapter = null
+
+export function setTerminalAdapter(adapter = null) {
+  terminalAdapter = adapter
+}
 
 const wrap = (open, close) => (s) => (enabled ? `\x1b[${open}m${s}\x1b[${close}m` : String(s))
 
@@ -521,7 +526,7 @@ function shimmer(word, tick) {
 }
 
 export function startSpinner(codename, display) {
-  if (!process.stdout.isTTY) {
+  if (!process.stdout.isTTY && !terminalAdapter) {
     return { log: (line) => console.log(line), setStatus() {}, stop() {} }
   }
   const startedAt = Date.now()
@@ -541,6 +546,31 @@ export function startSpinner(codename, display) {
     const meta = compact(`${codename} · ${seconds}s · ${status}`, Math.max(18, terminalColumns() - 20))
     // e.g.  ⠹ akoriting···   atlantis · 5s
     return `${glyph} ${shimmer('akoriting', tick)}${dots}   ${faint(meta)}`
+  }
+  if (terminalAdapter) {
+    const adapter = terminalAdapter
+    const draw = () => adapter.setSpinner(line())
+    draw()
+    const timer = setInterval(() => {
+      if (stopped) return
+      tick++
+      draw()
+    }, 110)
+    timer.unref?.()
+    return {
+      log(out) {
+        adapter.append(out)
+      },
+      setStatus(next) {
+        status = String(next || 'thinking through the request')
+        draw()
+      },
+      stop() {
+        stopped = true
+        clearInterval(timer)
+        adapter.setSpinner('')
+      },
+    }
   }
   const draw = () => process.stdout.write('\r' + line() + '\x1b[K')
   const clear = () => process.stdout.write('\r\x1b[K')
