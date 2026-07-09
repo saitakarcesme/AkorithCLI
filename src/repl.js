@@ -1016,8 +1016,10 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     closePalette()
     rl.line = ''
     rl.cursor = 0
-    readline.clearLine(process.stdout, 0)
-    readline.cursorTo(process.stdout, 0)
+    if (!terminalScreen) {
+      readline.clearLine(process.stdout, 0)
+      readline.cursorTo(process.stdout, 0)
+    }
     console.log()
     queue.push(cmd)
     void pump()
@@ -1775,8 +1777,15 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         return
       }
       await new Promise((resolve) => {
-        const child = spawn(cmd, { shell: true, stdio: ['ignore', 'inherit', 'inherit'] })
+        const child = spawn(cmd, {
+          shell: true,
+          stdio: terminalScreen ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'],
+        })
         activeChild = child
+        if (terminalScreen) {
+          child.stdout.on('data', (chunk) => terminalScreen.append(String(chunk).replace(/\s+$/, '')))
+          child.stderr.on('data', (chunk) => terminalScreen.append(red(String(chunk).replace(/\s+$/, ''))))
+        }
         child.on('exit', resolve)
         child.on('error', resolve)
       })
