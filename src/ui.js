@@ -12,6 +12,9 @@ const enabled = process.env.NO_COLOR === undefined && colorCapable
 const brandEnabled = process.env.AKORITH_MONO !== '1' && colorCapable
 const truecolor = /truecolor|24bit/i.test(process.env.COLORTERM || '')
 let terminalAdapter = null
+const graphemeSegmenter = typeof Intl.Segmenter === 'function'
+  ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  : null
 
 export function setTerminalAdapter(adapter = null) {
   terminalAdapter = adapter
@@ -54,6 +57,34 @@ export function stripAnsi(s) {
   return String(s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
 }
 
+export function splitGraphemes(value) {
+  const text_ = String(value ?? '')
+  return graphemeSegmenter ? [...graphemeSegmenter.segment(text_)].map((part) => part.segment) : [...text_]
+}
+
+export function terminalCellWidth(character) {
+  const value = String(character ?? '')
+  if (!value) return 0
+  if (/^[\u0000-\u001f\u007f-\u009f]$/u.test(value)) return 0
+  if (/^[\p{Mark}\u200d\ufe0e\ufe0f]$/u.test(value)) return 0
+  const code = value.codePointAt(0)
+  if (/\p{Extended_Pictographic}/u.test(value)) return 2
+  if (
+    code >= 0x1100 && (
+      code <= 0x115f || code === 0x2329 || code === 0x232a ||
+      (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
+      (code >= 0xac00 && code <= 0xd7a3) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xfe10 && code <= 0xfe19) ||
+      (code >= 0xfe30 && code <= 0xfe6f) ||
+      (code >= 0xff00 && code <= 0xff60) ||
+      (code >= 0xffe0 && code <= 0xffe6) ||
+      (code >= 0x20000 && code <= 0x3fffd)
+    )
+  ) return 2
+  return 1
+}
+
 export function terminalColumns(fallback = 80) {
   const value = Number(process.stdout.columns || process.env.COLUMNS || fallback)
   return Number.isFinite(value) && value > 0 ? value : fallback
@@ -65,7 +96,22 @@ export function terminalRows(fallback = 36) {
 }
 
 export function visibleLength(value) {
-  return [...stripAnsi(value)].length
+  return splitGraphemes(stripAnsi(value)).reduce((total, character) => total + terminalCellWidth(character), 0)
+}
+
+function takeCells(value, width, { fromEnd = false } = {}) {
+  const chars = splitGraphemes(value)
+  if (fromEnd) chars.reverse()
+  const out = []
+  let size = 0
+  for (const character of chars) {
+    const cellWidth = terminalCellWidth(character)
+    if (size + cellWidth > width) break
+    out.push(character)
+    size += cellWidth
+  }
+  if (fromEnd) out.reverse()
+  return out.join('')
 }
 
 export function fitText(value, max, { middle = false } = {}) {
@@ -75,11 +121,11 @@ export function fitText(value, max, { middle = false } = {}) {
   if (width <= 0) return ''
   if (width === 1) return '…'
   if (middle && width > 8) {
-    const head = Math.ceil((width - 1) * 0.45)
-    const tail = Math.floor((width - 1) * 0.55)
-    return `${plain.slice(0, head)}…${plain.slice(-tail)}`
+    const headWidth = Math.ceil((width - 1) * 0.45)
+    const tailWidth = Math.floor((width - 1) * 0.55)
+    return `${takeCells(plain, headWidth)}…${takeCells(plain, tailWidth, { fromEnd: true })}`
   }
-  const head = plain.slice(0, width - 1).replace(/\s+$/g, '')
+  const head = takeCells(plain, width - 1).replace(/\s+$/g, '')
   const lastSpace = head.lastIndexOf(' ')
   const cut = lastSpace >= Math.max(4, Math.floor(width * 0.55)) ? head.slice(0, lastSpace) : head
   return cut + '…'
@@ -289,9 +335,10 @@ export function sliceVisible(value, width) {
       }
     }
     const char = [...input.slice(i)][0]
+    if (size + terminalCellWidth(char) > limit) break
     out += char
     i += char.length
-    size += 1
+    size += terminalCellWidth(char)
   }
   if (/\x1b\[[0-9;?]*m/.test(out)) out += '\x1b[39m'
   return out
