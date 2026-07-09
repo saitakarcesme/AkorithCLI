@@ -194,6 +194,20 @@ function centerBlock(lines, width, height) {
   return out.slice(0, height)
 }
 
+export function overlayWindow(lines, height) {
+  const source = Array.isArray(lines) ? lines : []
+  const limit = Math.max(1, Number(height) || 1)
+  if (source.length <= limit) return source
+  if (limit <= 2) return source.slice(0, limit)
+  const top = source[0]
+  const bottom = source.at(-1)
+  const body = source.slice(1, -1)
+  const selected = Math.max(0, body.findIndex((line) => stripAnsi(line).includes('▸')))
+  const capacity = limit - 2
+  const start = Math.max(0, Math.min(selected - Math.floor(capacity / 2), body.length - capacity))
+  return [top, ...body.slice(start, start + capacity), bottom]
+}
+
 export function buildFrame({
   width,
   height,
@@ -224,7 +238,7 @@ export function buildFrame({
   const bodyHeight = Math.max(1, viewport.height - fixedRows)
   let bodySource
   if (Array.isArray(overlay)) {
-    bodySource = centerBlock(overlay, viewport.width, bodyHeight)
+    bodySource = centerBlock(overlayWindow(overlay, bodyHeight), viewport.width, bodyHeight)
   } else if (transcript.length) {
     bodySource = transcript.slice(-(bodyHeight - (notice ? 1 : 0) - (spinner ? 1 : 0)))
   } else {
