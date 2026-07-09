@@ -8,7 +8,7 @@ import {
 import {
   rule, bold, dim, faint, text, violet, green, red, yellow,
   diffAdd, diffDel, tintCursor, resetCursor, fitText, grokInputBoxLines, grokInputPrompt, grokSplashLines, padVisible,
-  panelLines, stripAnsi, userMessageLines, visibleLength, wrapWords,
+  panelLines, setTerminalAdapter, stripAnsi, userMessageLines, visibleLength, wrapWords,
 } from './ui.js'
 import { loadConfig, saveConfig, homeRelative } from './state.js'
 import {
@@ -18,6 +18,8 @@ import {
 import { runDoctorCommand, runReviewCommand, runUpdateCommand, buildReviewPatch } from './commands.js'
 import { COMMAND_CATALOG, filterCatalog, fuzzyMatch } from './palette.js'
 import { filePatch, parseDiff } from './review.js'
+import { InputEditor, ScreenInputAdapter } from './input-editor.js'
+import { TerminalScreen } from './terminal-screen.js'
 
 const STATIC_MODEL_CHOICES = [
   { label: 'Olympus · GPT-5 Codex', spec: 'codex/gpt-5-codex', aliases: ['gpt 5 codex', 'gpt-5 codex'] },
@@ -216,6 +218,16 @@ function mergeOptions(base = {}, override = {}) {
 
 function expandPath(value) {
   return String(value || '').replace(/^~(?=$|\/)/, os.homedir())
+}
+
+function readGitHeaderState(cwd) {
+  const branch = spawnSync('git', ['branch', '--show-current'], { cwd, encoding: 'utf8', timeout: 1000 })
+  if (branch.status !== 0) return { branch: '', dirty: false }
+  const status = spawnSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf8', timeout: 1000 })
+  return {
+    branch: String(branch.stdout || '').trim(),
+    dirty: status.status === 0 && Boolean(String(status.stdout || '').trim()),
+  }
 }
 
 export async function startRepl({ version, initialModel, initialOptions = {}, initialSessionId = null } = {}) {
