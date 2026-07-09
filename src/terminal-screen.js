@@ -113,30 +113,35 @@ export function composerLayout({
 } = {}) {
   const viewport = normalizeViewport(width, height)
   const tier = layoutTier(viewport.width, viewport.height)
-  const outerWidth = Math.max(MIN_COLUMNS, viewport.width)
+  const outerWidth = tier === 'compact'
+    ? viewport.width
+    : Math.max(44, Math.min(126, viewport.width - 4))
+  const left = Math.max(0, Math.floor((viewport.width - outerWidth) / 2))
+  const indent = ' '.repeat(left)
   const contentWidth = Math.max(8, outerWidth - 6)
   const wrapped = wrapEditorInput(input, cursor, contentWidth)
   const maxInputRows = tier === 'compact' ? Math.max(1, Math.min(3, viewport.height - 7)) : Math.max(2, Math.min(6, Math.floor(viewport.height / 3)))
   const firstVisible = Math.max(0, Math.min(wrapped.cursorRow - maxInputRows + 1, Math.max(0, wrapped.rows.length - maxInputRows)))
   const visibleRows = wrapped.rows.slice(firstVisible, firstVisible + maxInputRows)
   while (visibleRows.length < Math.min(2, maxInputRows)) visibleRows.push('')
-  const lines = [boxBorder('╭', '─', '╮', outerWidth, busy ? 'Working' : 'Message')]
+  const boxLines = [boxBorder('╭', '─', '╮', outerWidth, busy ? 'Working' : 'Message')]
   visibleRows.forEach((row, index) => {
     const marker = index === 0 && firstVisible === 0 ? '› ' : '  '
-    lines.push(`│ ${marker}${padVisible(row, contentWidth)} │`)
+    boxLines.push(`│ ${marker}${padVisible(row, contentWidth)} │`)
   })
-  lines.push(boxBorder('╰', '─', '╯', outerWidth))
+  boxLines.push(boxBorder('╰', '─', '╯', outerWidth))
   const status = tier === 'compact'
     ? `${fitText(model, Math.max(8, outerWidth - 24), { middle: true })} · ${mode} · ${usage}`
     : `${model} · ${mode} · ctx ${context} · ${usage}${queue ? ` · queued ${queue}` : ''}`
-  lines.push(plainCell(` ${status}`, outerWidth))
-  if (tier !== 'compact') lines.push(plainCell(' Enter send · Shift+Enter newline · Ctrl+P commands · Ctrl+C cancel', outerWidth))
+  boxLines.push(plainCell(` ${status}`, outerWidth))
+  if (tier !== 'compact') boxLines.push(plainCell(' Enter send · Shift+Enter newline · Ctrl+P commands · Ctrl+C cancel', outerWidth))
+  const lines = boxLines.map((line) => ansiCell(indent + line, viewport.width))
   const inputRow = 1 + wrapped.cursorRow - firstVisible
-  const inputColumn = 4 + wrapped.cursorColumn
+  const inputColumn = left + 4 + wrapped.cursorColumn
   return {
     lines,
     cursorRow: Math.max(1, Math.min(inputRow, lines.length - 3)),
-    cursorColumn: Math.max(4, Math.min(inputColumn, outerWidth - 2)),
+    cursorColumn: Math.max(left + 4, Math.min(inputColumn, left + outerWidth - 2)),
     firstVisible,
     tier,
   }
