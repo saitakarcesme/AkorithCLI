@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events'
+
 export class InputEditor {
   constructor({ historyLimit = 200, complete = null } = {}) {
     this.value = ''
@@ -147,3 +149,72 @@ export class InputEditor {
   }
 }
 
+export class ScreenInputAdapter extends EventEmitter {
+  constructor({ editor = new InputEditor(), render = () => {}, completer = null } = {}) {
+    super()
+    this.editor = editor
+    this.render = render
+    this.completer = completer
+    this.promptText = ''
+    this.questionCallback = null
+    this.closed = false
+  }
+
+  get line() {
+    return this.editor.value
+  }
+
+  set line(value) {
+    this.editor.setValue(value, Math.min(this.editor.cursor, [...String(value ?? '')].length))
+    this.render()
+  }
+
+  get cursor() {
+    return this.editor.cursor
+  }
+
+  set cursor(value) {
+    this.editor.cursor = Math.max(0, Math.min(Number(value) || 0, this.editor.chars().length))
+    this.render()
+  }
+
+  setPrompt(value) {
+    this.promptText = String(value ?? '')
+  }
+
+  getPrompt() {
+    return this.promptText
+  }
+
+  prompt() {
+    this.render()
+  }
+
+  question(prompt, callback) {
+    this.promptText = String(prompt ?? '')
+    this.questionCallback = callback
+    this.editor.setValue('')
+    this.render()
+  }
+
+  handleKeypress(str, key) {
+    return this.editor.handle(str, key)
+  }
+
+  submit(value) {
+    if (this.questionCallback) {
+      const callback = this.questionCallback
+      this.questionCallback = null
+      callback(value)
+      this.render()
+      return
+    }
+    this.emit('line', value)
+  }
+
+  close() {
+    if (this.closed) return
+    this.closed = true
+    this.emit('close')
+  }
+}
