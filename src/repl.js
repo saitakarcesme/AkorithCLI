@@ -674,6 +674,11 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       const cursor = selected ? violet('▸') : faint(' ')
       const active = current ? green('●') : faint('○')
       const number = selected ? violet(String(index + 1).padStart(2)) : faint(String(index + 1).padStart(2))
+      if (width < 56) {
+        const summary = fitText(`${choice.label} · ${choice.visibleSpec || choice.spec}`, Math.max(8, inner - 8), { middle: true })
+        rows.push(`${cursor} ${active} ${number} ${selected ? text(bold(summary)) : faint(summary)}`)
+        return
+      }
       const labelText = padVisible(fitText(choice.label, Math.max(18, inner - specWidth - 12), { middle: true }), Math.max(18, inner - specWidth - 12))
       const label = selected ? text(bold(labelText)) : text(labelText)
       const specText = choice.visibleSpec || choice.spec
@@ -784,6 +789,11 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       const cursor = selected ? violet('▸') : faint(' ')
       const mark = active ? green('●') : session.archived ? yellow('■') : faint('○')
       const num = selected ? violet(String(index + 1).padStart(2)) : faint(String(index + 1).padStart(2))
+      if (width < 60) {
+        const summary = fitText(session.name || session.id, Math.max(8, inner - 8), { middle: true })
+        rows.push(`${cursor} ${mark} ${num} ${selected ? text(bold(summary)) : faint(summary)}`)
+        return
+      }
       const idText = padVisible(fitText(session.id, idBudget, { middle: true }), idBudget)
       const id = selected ? text(bold(idText)) : text(idText)
       const model = fitText(session.selection ? formatModel(session.selection) : 'unknown', modelBudget, { middle: true })
@@ -954,6 +964,11 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     paletteChoices.slice(0, 10).forEach((entry, index) => {
       const selected = index === paletteSelected
       const cursor = selected ? violet('▸') : faint(' ')
+      if (width < 58) {
+        const summary = fitText(`${entry.cmd} — ${entry.title}`, Math.max(8, inner - 4), { middle: true })
+        rows.push(`${cursor} ${selected ? text(bold(summary)) : faint(summary)}`)
+        return
+      }
       const cmdText = padVisible(fitText(entry.cmd, cmdBudget, { middle: true }), cmdBudget)
       const titleText = padVisible(fitText(entry.title, titleBudget), titleBudget)
       const cmd = selected ? text(bold(cmdText)) : faint(cmdText)
@@ -1154,6 +1169,12 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       const open = reviewExpanded.has(reviewKey(f))
       const cursor = selected ? violet('▸') : faint(' ')
       const mark = f.binary ? yellow('■') : open ? green('▾') : faint('▸')
+      if (width < 58) {
+        const countsText = f.binary ? 'binary' : `+${f.adds} -${f.dels}`
+        const summary = fitText(`${f.path} ${countsText}`, Math.max(8, inner - 5), { middle: true })
+        rows.push(`${cursor} ${mark} ${selected ? text(bold(summary)) : faint(summary)}`)
+        return
+      }
       const chip = f.summary === 'new file' ? green('created')
         : f.summary === 'deleted' ? red('deleted')
         : f.summary === 'renamed' ? violet('moved')
