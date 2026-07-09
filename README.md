@@ -19,6 +19,11 @@ npm install -g akorith
 
 Then type `akorith` in any terminal.
 
+Akorith's interactive workspace opens with a Grok Build-style start screen:
+a bordered launch card, the colorful pixel Akorith wordmark, a bottom input box,
+model/context/token status in the input footer, and panel-based pickers for
+models, sessions, commands, and reviews.
+
 ### From this repo (development)
 
 ```bash
@@ -78,7 +83,7 @@ matter when you want to live in one terminal:
 | `--search` | `akorith --search` and `/option search on` |
 | `--json`, `--output-schema`, `-o` | same CLI flags and `/option json/schema/output` |
 | `-s, --sandbox` | same CLI flag and `/option sandbox <mode>` |
-| `-a, --ask-for-approval` | same CLI flag and `/option approval <policy>` |
+| `-a, --ask-for-approval` | accepted for compatibility; forwarded only where the provider supports it |
 | `codex review` | `akorith review` with `--uncommitted`, `--base`, `--commit`, `--title` |
 | `resume/archive/delete/fork` | native Akorith session commands and slash commands |
 | `doctor/update` | `akorith doctor` and `akorith update` |
@@ -116,8 +121,9 @@ or type a number/alias/model spec directly.
 Olympus entries are Codex/GPT models, Atlantis entries are Claude models, and
 Gaia entries are loaded from `opencode models` so they appear as exact OpenCode
 model IDs such as `opencode-go/glm-5.2` rather than a vague default.
-Long submitted prompts are re-rendered with word wrapping, and the live
-`akoriting` line shows the current high-level phase while a model is working.
+Long submitted prompts are re-rendered with word wrapping, and the start screen
+reflows with the terminal width without splitting words in the middle.
+The live `akoriting` line shows the current high-level phase while a model is working.
 Akorith shows provider-supplied output and high-level phases; it does not expose
 hidden private chain-of-thought from models.
 
