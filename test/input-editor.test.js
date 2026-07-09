@@ -11,6 +11,16 @@ test('edits Unicode input by visible code points', () => {
   assert.equal(editor.cursor, 1)
 })
 
+test('keeps joined emoji and combining sequences atomic', () => {
+  const editor = new InputEditor()
+  editor.insert('e\u0301👨‍👩‍👧‍👦x')
+  assert.equal(editor.cursor, 3)
+  editor.deleteBackward()
+  editor.deleteBackward()
+  assert.equal(editor.value, 'e\u0301')
+  assert.equal(editor.cursor, 1)
+})
+
 test('submits input and stores history', () => {
   const editor = new InputEditor()
   editor.insert('first prompt')

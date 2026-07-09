@@ -14,6 +14,13 @@ test('wrapWords elides overlong tokens instead of splitting words', () => {
   assert.ok(!lines.some((line) => line === token.slice(0, 24)))
 })
 
+test('visible width accounts for emoji, CJK, and combining marks', () => {
+  assert.equal(visibleLength('A🙂界'), 5)
+  assert.equal(visibleLength('e\u0301'), 1)
+  assert.equal(visibleLength('plain'), 5)
+  assert.ok(visibleLength(fitText('🙂🙂🙂🙂', 5)) <= 5)
+})
+
 test('spinner renders through the full-screen adapter without raw cursor writes', () => {
   const events = []
   setTerminalAdapter({
