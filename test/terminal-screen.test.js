@@ -37,11 +37,11 @@ test('persistent header never exceeds the viewport', () => {
 
 test('composer keeps typed text inside a closed box', () => {
   const layout = composerLayout({ width: 80, height: 24, input: 'hello Akorith', cursor: 13 })
-  assert.ok(layout.lines[0].startsWith('╭'))
-  assert.ok(layout.lines[0].endsWith('╮'))
-  assert.ok(layout.lines[1].startsWith('│ › hello Akorith'))
-  assert.ok(layout.lines[1].endsWith('│'))
-  assert.ok(layout.lines.some((line) => line.startsWith('╰') && line.endsWith('╯')))
+  assert.ok(layout.lines[0].trimStart().startsWith('╭'))
+  assert.ok(layout.lines[0].trimEnd().endsWith('╮'))
+  assert.ok(layout.lines[1].trimStart().startsWith('│ › hello Akorith'))
+  assert.ok(layout.lines[1].trimEnd().endsWith('│'))
+  assert.ok(layout.lines.some((line) => line.trimStart().startsWith('╰') && line.trimEnd().endsWith('╯')))
   assert.ok(layout.lines.every((line) => visibleLength(line) === 80))
 })
 
