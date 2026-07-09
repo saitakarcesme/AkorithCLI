@@ -6,8 +6,9 @@ import {
   connectionStatus, loadConnections, saveConnections,
 } from './providers.js'
 import {
-  animateBanner, rule, bold, dim, faint, text, violet, green, red, yellow, cyan,
-  diffAdd, diffDel, tintCursor, resetCursor,
+  rule, bold, dim, faint, text, violet, green, red, yellow,
+  diffAdd, diffDel, tintCursor, resetCursor, fitText, grokInputBoxLines, grokInputPrompt, grokSplashLines, padVisible,
+  panelLines, stripAnsi, userMessageLines, visibleLength, wrapWords,
 } from './ui.js'
 import { loadConfig, saveConfig, homeRelative } from './state.js'
 import {
@@ -51,58 +52,62 @@ function elideMiddle(value, max) {
   return `${value.slice(0, head)}…${value.slice(-tail)}`
 }
 
-function compactConnections(labels) {
-  const joined = labels.join(' · ')
-  if (joined.length <= terminalColumns() - 18) return joined
-  return `${labels[0]} +${labels.length - 1}`
-}
-
 function rawTerminalColumns() {
   const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
   return Math.max(24, Number.isFinite(columns) ? columns : 88)
 }
 
 function displayLength(value) {
-  return [...String(value)].length
+  return visibleLength(value)
 }
 
 function wrapSubmittedInput(input, width) {
-  const words = String(input).trim().split(/\s+/)
-  const lines = []
-  let line = ''
-  for (let word of words) {
-    while (displayLength(word) > width) {
-      if (line) {
-        lines.push(line)
-        line = ''
-      }
-      lines.push(word.slice(0, width))
-      word = word.slice(width)
-    }
-    if (!line) {
-      line = word
-    } else if (displayLength(line) + 1 + displayLength(word) <= width) {
-      line += ' ' + word
-    } else {
-      lines.push(line)
-      line = word
-    }
-  }
-  if (line) lines.push(line)
-  return lines.length ? lines : ['']
+  return wrapWords(input, width)
 }
 
-function rewriteSubmittedLine(line) {
+function formatUsageCount(value) {
+  return (Number(value) || 0).toLocaleString('en-US')
+}
+
+function clockLabel(date = new Date()) {
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
+function contextWindowFor(selection) {
+  const provider = selection?.provider || ''
+  const model = String(selection?.model || '').toLowerCase()
+  if (provider === 'claude') return '200k'
+  if (provider === 'ollama' && /llama3\.2/.test(model)) return '128k'
+  if (provider === 'codex' && /gpt-5|gpt-5\.5/.test(model)) return 'provider'
+  return 'provider'
+}
+
+function compactModelStatus(selection) {
+  const provider = selection?.provider || 'model'
+  const model = selection?.model || 'default'
+  return `model ${model === 'default' ? `${provider}/default` : model}`
+}
+
+function mergeUsageTotals(totals, usage = {}) {
+  const input = Number(usage.input) || 0
+  const output = Number(usage.output) || 0
+  const total = Number(usage.total) || (input + output)
+  totals.input += input
+  totals.output += output
+  totals.total += total
+}
+
+function rewriteSubmittedLine(line, promptText = text(bold('❯ '))) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return
   const columns = rawTerminalColumns()
-  const promptWidth = 2
+  const promptWidth = Math.max(2, displayLength(stripAnsi(promptText)))
   if (displayLength(line) + promptWidth <= columns) return
   const rows = Math.max(1, Math.ceil((displayLength(line) + promptWidth) / columns))
   readline.moveCursor(process.stdout, 0, -rows)
   readline.clearScreenDown(process.stdout)
   const chunks = wrapSubmittedInput(line, Math.max(18, columns - promptWidth))
   chunks.forEach((chunk, index) => {
-    const prefix = index === 0 ? text(bold('❯ ')) : faint('  ')
+    const prefix = index === 0 ? promptText : faint(' '.repeat(promptWidth))
     console.log(prefix + text(bold(chunk)))
   })
 }
@@ -257,6 +262,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   let sessionPickerRows = 0
   let sessionPickAll = false
   let sessionPickConfirm = null // {verb, target} when awaiting y/n
+  let sessionPickerJustOpened = false
   // command palette (ctrl+p) state
   let awaitingPalette = false
   let paletteQuery = ''
@@ -273,6 +279,11 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   let reviewFiltering = false
   let reviewRows = 0
   let reviewArgs = null
+  let rl = null
+  let splashActive = false
+  let promptBoxActive = false
+  let promptBoxPreludeRows = 0
+  const usageTotals = { input: 0, output: 0, total: 0 }
 
   function resetStarted(next = {}) {
     for (const key of Object.keys(started)) started[key] = Boolean(next[key])
@@ -338,20 +349,10 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     else bootNotice = yellow(`Session not found: ${initialSessionId}`)
   }
 
-  console.clear()
-  tintCursor()
-  await animateBanner(version)
-  console.log()
-  printStatus()
-  printConnections()
-  printHint()
-  if (bootNotice) console.log(bootNotice)
-  console.log()
-
-  const rl = readline.createInterface({
+  rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: text(bold('❯ ')) ,
+    prompt: currentPrompt(),
     completer(line) {
       if (line.startsWith('/model ')) {
         const partial = line.slice(7)
@@ -367,69 +368,154 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     },
   })
 
-  function printConnections() {
-    const status = connectionStatus()
-    const on = Object.entries(status).filter(([, c]) => c.on).map(([, c]) => c.label)
-    const off = Object.entries(status).filter(([, c]) => !c.on && c.ready).map(([, c]) => c.label)
-    const parts = []
-    if (on.length) parts.push(green('⚡ ' + compactConnections(on)))
-    if (off.length) parts.push(faint('○ ' + off.join(' · ')))
-    if (!on.length && !off.length) return
-    console.log(faint('connected  ') + parts.join(faint('   ')))
+  tintCursor()
+  renderSplash({ tip: bootNotice ? stripAnsi(bootNotice) : null })
+
+  function currentPrompt() {
+    if (splashActive || promptBoxActive) return grokInputPrompt()
+    return text(bold('› '))
   }
 
-  function printHint() {
-    const hint =
-      terminalColumns() < 72
-        ? 'Type a task. /help for commands.'
-        : 'Type a task. /help for commands, /connect for integrations, ! to run shell.'
-    console.log(dim(hint))
+  function refreshPrompt() {
+    if (rl) rl.setPrompt(currentPrompt())
+  }
+
+  function promptNow(force = false) {
+    refreshPrompt()
+    rl.prompt(force)
+  }
+
+  function splashInputStatus() {
+    return [
+      compactModelStatus(selection),
+      `ctx ${contextWindowFor(selection)}`,
+      `input ${formatUsageCount(usageTotals.input)}`,
+      `output ${formatUsageCount(usageTotals.output)}`,
+      `total ${formatUsageCount(usageTotals.total)}`,
+    ].join(' · ')
+  }
+
+  function renderSplash({ tip = null } = {}) {
+    splashActive = true
+    promptBoxActive = false
+    refreshPrompt()
+    const { lines } = grokSplashLines({
+      version,
+      tip: tip || 'Use /timeline or ctrl+x g to jump to specific messages',
+      inputStatus: splashInputStatus(),
+    })
+    console.clear()
+    if (process.stdout.isTTY) {
+      process.stdout.write(lines.join('\n') + '\n')
+    } else {
+      for (const line of lines) console.log(line)
+    }
+  }
+
+  function renderPromptBox() {
+    if (!process.stdout.isTTY) return false
+    promptBoxActive = true
+    refreshPrompt()
+    const { lines } = grokInputBoxLines({
+      inputStatus: splashInputStatus(),
+    })
+    promptBoxPreludeRows = lines.length
+    process.stdout.write('\n' + lines.join('\n') + '\n')
+    return true
+  }
+
+  function clearPromptBox({ afterSubmit = false } = {}) {
+    if (!process.stdout.isTTY || !promptBoxActive) return
+    readline.moveCursor(process.stdout, 0, -(promptBoxPreludeRows + (afterSubmit ? 1 : 0)))
+    readline.cursorTo(process.stdout, 0)
+    readline.clearScreenDown(process.stdout)
+    promptBoxActive = false
+    promptBoxPreludeRows = 0
+  }
+
+  function promptIdle() {
+    refreshPrompt()
+    if (awaitingModelPick || awaitingSessionPick || awaitingPalette || awaitingReview) {
+      promptNow(true)
+      return
+    }
+    if (!splashActive && renderPromptBox()) {
+      promptNow(true)
+      return
+    }
+    promptNow()
+  }
+
+  function promptIdleSoon() {
+    setImmediate(promptIdle)
   }
 
   function connectMenu() {
     const status = connectionStatus()
-    console.log()
-    console.log(text(bold('Connections')) + dim(' — external tools models can drive in act mode'))
+    const rows = []
     for (const [id, c] of Object.entries(status)) {
       const dot = !c.ready ? red('✗') : c.on ? green('⚡') : faint('○')
       const state = !c.ready ? red('unavailable') : c.on ? green('on') : faint('off')
-      console.log(`  ${dot} ${text(bold(c.label.padEnd(8)))} ${state.padEnd(11)} ${faint(c.detail)}`)
-      console.log(`      ${faint(c.note)}`)
+      rows.push(`${dot} ${text(bold(padVisible(c.label, 8)))} ${padVisible(state, 11)} ${faint(fitText(c.detail, Math.max(16, terminalColumns() - 34)))}`)
+      rows.push(`${faint('  ' + fitText(c.note, Math.max(16, terminalColumns() - 10)))}`)
     }
     console.log()
-    console.log(faint('  /connect <name> on|off   toggle a connection (e.g. /connect github off)'))
+    printPanelBlock({
+      title: 'Connections',
+      subtitle: 'external tools models can drive in act mode',
+      lines: rows,
+      footer: '/connect <name> on|off',
+    })
     console.log()
   }
 
   function printStatus() {
-    const narrow = terminalColumns() < 72
-    const model = narrow
-      ? `${selection.provider}/${selection.model || 'default'}`
-      : formatModel(selection)
-    const cwd = homeRelative(process.cwd())
-    const state = narrow
-      ? started[selection.provider] ? 'cont' : 'new'
-      : started[selection.provider] ? 'session continues' : 'new session'
-    const fixed = model.length + mode.length + state.length + 14
-    const cwdBudget = Math.max(12, terminalColumns() - fixed)
-    const parts = [
-      green('●') + ' ' + dim(model),
-      mode === 'act' ? green('act') : yellow('view'),
-      faint(elideMiddle(cwd, cwdBudget)),
-      faint(state),
-    ]
-    console.log(parts.join(faint('  ·  ')))
+    refreshPrompt()
+  }
+
+  function printPanelBlock(options) {
+    for (const line of panelLines({ width: Math.min(terminalColumns(), 118), ...options })) console.log(line)
+  }
+
+  function printTurnHeader({ title, subtitle = '', prompt = '', footer = 'streaming output below' }) {
+    const width = rawTerminalColumns()
+    for (const line of userMessageLines({ prompt: prompt || title || '', width, timeLabel: clockLabel() })) {
+      console.log(line)
+    }
+    const label = title === 'Review' ? 'Review' : 'Thought'
+    console.log()
+    console.log(faint('  ◆ ') + bold(label) + faint(' · ') + dim(fitText(subtitle || formatModel(selection), Math.max(18, width - 14), { middle: true })))
+    console.log()
+  }
+
+  function printTurnFooter({ code, seconds, title = 'Turn complete' }) {
+    const ok = code === 0
+    const cancelled = code === 130
+    if (ok) {
+      console.log(faint('    ') + dim(`Turn completed in ${seconds}s.`))
+      return
+    }
+    const status = cancelled ? yellow('Turn cancelled') : red(`Turn exited ${code}`)
+    console.log(faint('    ') + status + faint(` in ${seconds}s.`))
   }
 
   function listModels() {
-    console.log()
-    console.log(text(bold('Providers')) + dim(' — switch with /model <provider>[/<model>]'))
+    const rows = []
+    const width = Math.min(terminalColumns(), 118)
+    const hintBudget = Math.max(18, width - 38)
     for (const p of Object.values(PROVIDERS)) {
       const status = available[p.id] ? green('ready') : red('not installed')
       const active = selection.provider === p.id ? violet('▸') : ' '
-      console.log(`  ${active} ${text(bold(p.id.padEnd(9)))} ${violet(p.codename.padEnd(9))} ${status}`)
-      console.log(`      ${faint(p.hint)}`)
+      rows.push(`${active} ${text(bold(padVisible(p.id, 9)))} ${violet(padVisible(p.codename, 9))} ${status}`)
+      rows.push(`${faint('  ' + fitText(p.hint, hintBudget))}`)
     }
+    console.log()
+    printPanelBlock({
+      title: 'Providers',
+      subtitle: 'switch with /model <provider>[/<model>]',
+      lines: rows,
+      footer: '/model opens the picker',
+    })
     console.log()
   }
 
@@ -461,10 +547,12 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function modelPickerLines() {
-    const specWidth = Math.max(18, Math.min(34, terminalColumns() - 36))
-    const lines = [rule('model picker · ↑/↓ · enter', violet, '╭')]
+    const width = Math.min(terminalColumns(), 118)
+    const inner = width - 4
+    const specWidth = Math.max(14, Math.min(34, inner - 38))
+    const rows = []
     if (!modelPickChoices.length) {
-      lines.push(red('  No installed providers are available.'))
+      rows.push(red('No installed providers are available.'))
     }
     modelPickChoices.forEach((choice, index) => {
       const selected = index === modelPickSelected
@@ -472,14 +560,20 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       const cursor = selected ? violet('▸') : faint(' ')
       const active = current ? green('●') : faint('○')
       const number = selected ? violet(String(index + 1).padStart(2)) : faint(String(index + 1).padStart(2))
-      const label = selected ? text(bold(choice.label.padEnd(28))) : text(choice.label.padEnd(28))
+      const labelText = padVisible(fitText(choice.label, Math.max(18, inner - specWidth - 12), { middle: true }), Math.max(18, inner - specWidth - 12))
+      const label = selected ? text(bold(labelText)) : text(labelText)
       const specText = choice.visibleSpec || choice.spec
-      const spec = selected ? violet(elideMiddle(specText, specWidth)) : faint(elideMiddle(specText, specWidth))
-      lines.push(`  ${cursor} ${active} ${number} ${label} ${spec}`)
+      const spec = selected ? violet(fitText(specText, specWidth, { middle: true })) : faint(fitText(specText, specWidth, { middle: true }))
+      rows.push(`${cursor} ${active} ${number} ${label} ${spec}`)
     })
-    lines.push(rule('enter selects · type alias/spec · q or esc cancels', dim, '╰'))
-    lines.push(faint('examples: gpt 5.5 high · fable 5 · opencode-go/glm-5.2'))
-    return lines
+    rows.push(faint('examples: gpt 5.5 high · fable 5 · opencode-go/glm-5.2'))
+    return panelLines({
+      title: 'Model picker',
+      subtitle: '↑/↓ · enter',
+      lines: rows,
+      footer: 'enter selects · type alias/spec · q or esc cancels',
+      width,
+    })
   }
 
   function printModelPicker() {
@@ -524,6 +618,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       console.log(dim('Model picker opens after the current turn finishes.'))
       return
     }
+    if (promptBoxActive) clearPromptBox()
     modelPickChoices = modelChoices()
     modelPickSelected = currentModelChoiceIndex(modelPickChoices)
     awaitingModelPick = true
@@ -539,6 +634,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     selection = parsed
     persist({ model: modelSpec(selection) })
     if (activeSession) activeSession = touchSession(activeSession.id, { selection }) || activeSession
+    refreshPrompt()
     console.log(green('✓ ') + 'Now talking to ' + bold(formatModel(selection)))
     return true
   }
@@ -548,28 +644,36 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   // ctrl+d deletes (with a y/n confirm), e exports a markdown transcript, q/esc
   // cancels. Triggered by `/sessions` with no args; `--all` lists every folder.
   function sessionPickerLines() {
-    const lines = [rule(`sessions · ↑/↓ · enter resume · ctrl+r rename · ctrl+d delete · e export${sessionPickAll ? ' · --all' : ''}`, violet, '╭')]
+    const width = Math.min(terminalColumns(), 118)
+    const inner = width - 4
+    const rows = []
     if (!sessionPickChoices.length) {
-      lines.push(faint('  No sessions yet. The first real prompt creates one.'))
+      rows.push(faint('No sessions yet. The first real prompt creates one.'))
     }
-    const idBudget = 14
-    const modelBudget = 24
-    const promptBudget = Math.max(16, terminalColumns() - idBudget - modelBudget - 14)
+    const idBudget = terminalColumns() < 84 ? 10 : 14
+    const modelBudget = terminalColumns() < 84 ? 18 : 24
+    const promptBudget = Math.max(16, inner - idBudget - modelBudget - 12)
     sessionPickChoices.forEach((session, index) => {
       const selected = index === sessionPickSelected
       const active = activeSession?.id === session.id
       const cursor = selected ? violet('▸') : faint(' ')
       const mark = active ? green('●') : session.archived ? yellow('■') : faint('○')
       const num = selected ? violet(String(index + 1).padStart(2)) : faint(String(index + 1).padStart(2))
-      const id = selected ? text(bold(session.id.slice(0, idBudget).padEnd(idBudget))) : text(session.id.slice(0, idBudget).padEnd(idBudget))
-      const model = (session.selection ? formatModel(session.selection) : 'unknown').slice(0, modelBudget)
-      const modelCell = selected ? violet(model.padEnd(modelBudget)) : faint(model.padEnd(modelBudget))
+      const idText = padVisible(fitText(session.id, idBudget, { middle: true }), idBudget)
+      const id = selected ? text(bold(idText)) : text(idText)
+      const model = fitText(session.selection ? formatModel(session.selection) : 'unknown', modelBudget, { middle: true })
+      const modelCell = selected ? violet(padVisible(model, modelBudget)) : faint(padVisible(model, modelBudget))
       const promptText = (session.lastPrompt || '(no turns yet)').replace(/\s+/g, ' ').trim()
-      const promptCell = (selected ? text : faint)(elideMiddle(promptText, promptBudget))
-      lines.push(`  ${cursor} ${mark} ${num} ${id} ${modelCell} ${promptCell}`)
+      const promptCell = (selected ? text : faint)(fitText(promptText, promptBudget))
+      rows.push(`${cursor} ${mark} ${num} ${id} ${modelCell} ${promptCell}`)
     })
-    lines.push(rule('enter resume · ctrl+r rename · ctrl+d delete · e export · q or esc cancels', dim, '╰'))
-    return lines
+    return panelLines({
+      title: 'Sessions',
+      subtitle: sessionPickAll ? 'all folders' : 'current folder',
+      lines: rows,
+      footer: 'enter resume · ctrl+r rename · ctrl+d delete · e export · q/esc',
+      width,
+    })
   }
 
   function printSessionPicker() {
@@ -600,6 +704,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     sessionPickChoices = []
     sessionPickSelected = 0
     sessionPickConfirm = null
+    sessionPickerJustOpened = false
   }
 
   function moveSessionPicker(delta) {
@@ -614,6 +719,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       console.log(dim('Session picker opens after the current turn finishes.'))
       return
     }
+    if (promptBoxActive) clearPromptBox()
     sessionPickAll = all
     sessionPickChoices = listSessions({ all, cwd: all ? null : process.cwd() })
     if (!sessionPickChoices.length) {
@@ -626,6 +732,8 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     const activeIdx = sessionPickChoices.findIndex((s) => s.id === activeSession?.id)
     sessionPickSelected = activeIdx >= 0 ? activeIdx : 0
     awaitingSessionPick = true
+    sessionPickerJustOpened = true
+    setImmediate(() => { sessionPickerJustOpened = false })
     console.log()
     printSessionPicker()
   }
@@ -698,24 +806,33 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   // esc/q cancels, backspace edits the query. Mirrors the model picker's
   // redraw-in-place style.
   function paletteLines() {
-    const lines = [rule(`command palette · type to filter · ↑/↓ · enter`, violet, '╭')]
+    const width = Math.min(terminalColumns(), 118)
+    const inner = width - 4
+    const rows = []
     if (!paletteChoices.length) {
-      lines.push(red('  No matching commands.'))
+      rows.push(red('No matching commands.'))
     }
-    const cmdBudget = 26
-    const titleBudget = 22
-    const descBudget = Math.max(16, terminalColumns() - cmdBudget - titleBudget - 10)
+    const cmdBudget = terminalColumns() < 78 ? 18 : 26
+    const titleBudget = terminalColumns() < 78 ? 18 : 22
+    const descBudget = Math.max(12, inner - cmdBudget - titleBudget - 8)
     paletteChoices.slice(0, 10).forEach((entry, index) => {
       const selected = index === paletteSelected
       const cursor = selected ? violet('▸') : faint(' ')
-      const cmd = selected ? text(bold(entry.cmd.slice(0, cmdBudget).padEnd(cmdBudget))) : faint(entry.cmd.slice(0, cmdBudget).padEnd(cmdBudget))
-      const title = (selected ? text : faint)(entry.title.slice(0, titleBudget).padEnd(titleBudget))
-      const desc = faint(elideMiddle(entry.desc, descBudget))
-      lines.push(`  ${cursor} ${cmd} ${title} ${desc}`)
+      const cmdText = padVisible(fitText(entry.cmd, cmdBudget, { middle: true }), cmdBudget)
+      const titleText = padVisible(fitText(entry.title, titleBudget), titleBudget)
+      const cmd = selected ? text(bold(cmdText)) : faint(cmdText)
+      const title = (selected ? text : faint)(titleText)
+      const desc = faint(fitText(entry.desc, descBudget))
+      rows.push(`${cursor} ${cmd} ${title} ${desc}`)
     })
-    if (paletteChoices.length > 10) lines.push(faint('  … ' + (paletteChoices.length - 10) + ' more — narrow the query'))
-    lines.push(rule('enter runs · esc/q cancels', dim, '╰'))
-    return lines
+    if (paletteChoices.length > 10) rows.push(faint('… ' + (paletteChoices.length - 10) + ' more, narrow the query'))
+    return panelLines({
+      title: 'Command palette',
+      subtitle: paletteQuery ? `filter ${paletteQuery}` : 'type to filter',
+      lines: rows,
+      footer: 'enter runs · esc/q cancels',
+      width,
+    })
   }
 
   function printPalette() {
@@ -750,6 +867,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   function showPalette() {
     if (activeChild || busy || closing || awaitingModelPick || awaitingSessionPick) return
+    if (promptBoxActive) clearPromptBox()
     paletteQuery = ''
     paletteChoices = filterCatalog('')
     paletteSelected = 0
@@ -870,15 +988,17 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function reviewLines() {
+    const width = Math.min(terminalColumns(), 118)
+    const inner = width - 4
     const count = reviewFilter
       ? `${reviewFiles.length}/${reviewAllFiles.length} files`
       : `${reviewFiles.length} file${reviewFiles.length === 1 ? '' : 's'}`
     const filter = reviewFilter || reviewFiltering
-      ? ` · filter:${reviewFiltering ? violet(reviewFilter || ' ') : faint(reviewFilter)}`
+      ? `filter ${reviewFilter || ' '}`
       : ''
-    const lines = [rule(`review · ${count}${filter} · ↑/↓ · enter expand · r review · q esc`, violet, '╭')]
+    const rows = []
     if (!reviewFiles.length) {
-      lines.push(red('  No files match this filter.'))
+      rows.push(red('No files match this filter.'))
     }
     reviewFiles.forEach((f, index) => {
       const selected = index === reviewSelected
@@ -890,24 +1010,32 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         : f.summary === 'renamed' ? violet('moved')
         : f.binary ? yellow('binary')
         : dim('patched')
-      const path = selected ? text(bold(f.path)) : text(f.path)
+      const countsText = f.binary ? '' : `+${f.adds} -${f.dels}`
+      const pathBudget = Math.max(14, inner - visibleLength(stripAnsi(countsText)) - 18)
+      const pathText = fitText(f.path, pathBudget, { middle: true })
+      const path = selected ? text(bold(pathText)) : text(pathText)
       const counts = f.binary ? '' : faint('  ' + green('+' + f.adds) + ' ' + red('-' + f.dels))
-      lines.push(`  ${cursor} ${mark} ${path} ${chip}${counts}`)
+      rows.push(`${cursor} ${mark} ${path} ${chip}${counts}`)
       if (open && !f.binary) {
         for (const hunk of f.hunks) {
-          lines.push(faint('  │ ' + hunk.header))
+          rows.push(faint('│ ' + fitText(hunk.header, inner - 2, { middle: true })))
           for (const l of hunk.lines) {
             const body = l.slice(1)
-            if (/^\+/.test(l)) lines.push(diffAdd(body))
-            else if (/^-/.test(l)) lines.push(diffDel(body))
-            else if (/^ /.test(l)) lines.push(faint('  │ ' + body))
-            else lines.push(faint('  │ ' + l))
+            if (/^\+/.test(l)) rows.push(diffAdd(body, inner))
+            else if (/^-/.test(l)) rows.push(diffDel(body, inner))
+            else if (/^ /.test(l)) rows.push(faint('│ ' + fitText(body, inner - 2, { middle: true })))
+            else rows.push(faint('│ ' + fitText(l, inner - 2, { middle: true })))
           }
         }
       }
     })
-    lines.push(rule(reviewFiltering ? 'type filter · enter done · esc done · ctrl+u clear' : '/ filter · c clear · r review file · n/p next/prev · a all · q esc', dim, '╰'))
-    return lines
+    return panelLines({
+      title: 'Review browser',
+      subtitle: [count, filter].filter(Boolean).join(' · '),
+      lines: rows,
+      footer: reviewFiltering ? 'type filter · enter done · esc done · ctrl+u clear' : '/ filter · c clear · r review file · n/p next/prev · a all · q esc',
+      width,
+    })
   }
 
   function printReview() {
@@ -966,7 +1094,12 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     const patch = filePatch(f)
     const prompt = [`Focus on ${f.path}.`, reviewArgs?.prompt].filter(Boolean).join(' ')
     const review = { ...(reviewArgs || {}), uncommitted: false, base: null, commit: null, patch, title: f.path, prompt }
-    console.log(rule(`${formatModel(selection)} · review · ${f.path}`, violet, '╭'))
+    printTurnHeader({
+      title: 'Review file',
+      subtitle: formatModel(selection),
+      prompt,
+      footer: fitText(f.path, Math.max(18, terminalColumns() - 12), { middle: true }),
+    })
     const startedAt = Date.now()
     const code = await runReviewCommand(
       { selection, mode: 'view', cwd: process.cwd(), options: turnOptions, review },
@@ -974,7 +1107,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     )
     activeChild = null
     const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
-    console.log(code === 0 ? rule(`✓ review done · ${seconds}s`, green, '╰') : rule(`✗ review exited · code ${code}`, red, '╰'))
+    printTurnFooter({ code, seconds, title: 'Review complete' })
     console.log()
     // Reopen the browser at the same position after the review completes.
     showReview(reviewArgs, { selectedPath, expanded, filter })
@@ -999,6 +1132,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     reviewSelected = 0
     applyReviewFilter({ keepPath: selectedPath })
     if (activeChild || busy || closing || awaitingModelPick || awaitingSessionPick || awaitingPalette) return
+    if (promptBoxActive) clearPromptBox()
     awaitingReview = true
     console.log()
     printReview()
@@ -1021,29 +1155,37 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     persist({ options: turnOptions })
   }
 
-  function printOptionList(label, values) {
-    if (!values?.length) return
-    console.log(`  ${violet(label.padEnd(14))} ${values.map((v) => faint(v)).join(dim(' · '))}`)
-  }
-
   function printOptions() {
+    const width = Math.min(terminalColumns(), 118)
+    const valueBudget = Math.max(18, width - 24)
+    const rows = [
+      `${violet(padVisible('search', 14))} ${formatBool(turnOptions.search)}`,
+      `${violet(padVisible('json', 14))} ${formatBool(turnOptions.json)}`,
+      `${violet(padVisible('sandbox', 14))} ${faint(turnOptions.sandbox || (mode === 'act' ? 'workspace-write' : 'read-only'))}`,
+      `${violet(padVisible('approval', 14))} ${faint(turnOptions.approval || 'provider default')}`,
+    ]
+    const addRow = (label, value) => {
+      if (value) rows.push(`${violet(padVisible(label, 14))} ${faint(fitText(value, valueBudget, { middle: true }))}`)
+    }
+    const addList = (label, values) => {
+      if (values?.length) addRow(label, values.join(' · '))
+    }
+    addRow('profile', turnOptions.profile)
+    addRow('output', turnOptions.outputFile)
+    addRow('schema', turnOptions.outputSchema)
+    addRow('local', turnOptions.localProvider)
+    addList('images', turnOptions.images)
+    addList('add-dirs', turnOptions.addDirs)
+    addList('configs', turnOptions.configs)
+    addList('enable', turnOptions.enableFeatures)
+    addList('disable', turnOptions.disableFeatures)
     console.log()
-    console.log(text(bold('Run options')) + dim(' — applied to future model turns where the provider supports them'))
-    console.log(`  ${violet('search'.padEnd(14))} ${formatBool(turnOptions.search)}`)
-    console.log(`  ${violet('json'.padEnd(14))} ${formatBool(turnOptions.json)}`)
-    console.log(`  ${violet('sandbox'.padEnd(14))} ${faint(turnOptions.sandbox || (mode === 'act' ? 'workspace-write' : 'read-only'))}`)
-    console.log(`  ${violet('approval'.padEnd(14))} ${faint(turnOptions.approval || 'provider default')}`)
-    if (turnOptions.profile) console.log(`  ${violet('profile'.padEnd(14))} ${faint(turnOptions.profile)}`)
-    if (turnOptions.outputFile) console.log(`  ${violet('output'.padEnd(14))} ${faint(turnOptions.outputFile)}`)
-    if (turnOptions.outputSchema) console.log(`  ${violet('schema'.padEnd(14))} ${faint(turnOptions.outputSchema)}`)
-    if (turnOptions.localProvider) console.log(`  ${violet('local'.padEnd(14))} ${faint(turnOptions.localProvider)}`)
-    printOptionList('images', turnOptions.images)
-    printOptionList('add-dirs', turnOptions.addDirs)
-    printOptionList('configs', turnOptions.configs)
-    printOptionList('enable', turnOptions.enableFeatures)
-    printOptionList('disable', turnOptions.disableFeatures)
-    console.log()
-    console.log(faint('Examples: /option search on · /option image ./shot.png · /option sandbox read-only'))
+    printPanelBlock({
+      title: 'Run options',
+      subtitle: 'future model turns',
+      lines: rows,
+      footer: '/option search on · /option image ./shot.png · /option sandbox read-only',
+    })
     console.log()
   }
 
@@ -1177,6 +1319,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
 
   function handleModelPickerInput(input) {
     const value = input.trim()
+    clearModelPicker()
     if (value === 'q' || value === 'quit' || value === 'cancel') {
       closeModelPicker()
       console.log(dim('Model switch cancelled.'))
@@ -1196,30 +1339,37 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function help() {
+    const width = Math.min(terminalColumns(), 118)
+    const cmdBudget = terminalColumns() < 76 ? 16 : 18
+    const descBudget = Math.max(20, width - cmdBudget - 10)
+    const command = (cmd, desc) => `${violet(padVisible(cmd, cmdBudget))} ${faint(fitText(desc, descBudget))}`
+    const rows = [
+      command('/model', 'open model picker, also via Alt+M when your terminal sends it'),
+      command('/model <spec>', 'switch directly, e.g. /model gpt 5.5 high or /model claude/sonnet'),
+      command('/models', 'list providers and how to address their models'),
+      command('/mode <m>', 'view read-only or act can edit files, default act'),
+      command('/thinking <m>', 'hide, minimal, show; ctrl+t cycles reasoning visibility'),
+      command('/options', 'inspect run options: images, add-dir, json, search, sandbox'),
+      command('/option <k> <v>', 'set a run option, e.g. /option image ./shot.png'),
+      command('/sessions', 'browse saved Akorith sessions for this folder'),
+      command('/resume --last', 'resume a saved session'),
+      command('/fork <id>', 'fork a session into a fresh branch of work'),
+      command('/review', 'browse and review the current diff file by file'),
+      command('/doctor', 'diagnose local CLIs, auth helpers, and global install'),
+      command('/connect', 'show and toggle GitHub, git, npm integrations'),
+      command('/cd <dir>', 'change the active working directory'),
+      command('/new', 'start fresh conversations for all providers'),
+      command('/clear', 'redraw the Grok Build-style start screen'),
+      command('/exit', 'leave Akorith'),
+      command('!<command>', 'run a shell command in place, e.g. !git status'),
+    ]
     console.log()
-    console.log(text(bold('Commands')))
-    console.log(`  ${violet('/model')}          open model picker — also via ⌘M/Alt+M when your terminal sends it`)
-    console.log(`  ${violet('/model <spec>')}   switch directly — e.g. /model gpt 5.5 high, /model claude/sonnet`)
-    console.log(`  ${violet('/models')}         list providers and how to address their models`)
-    console.log(`  ${violet('/mode <m>')}       view (read-only) or act (can edit files) — default act`)
-    console.log(`  ${violet('/thinking <m>')}   hide · minimal · show — how model reasoning appears (ctrl+t cycles)`)
-    console.log(`  ${violet('/options')}        inspect Codex-style run options: images, add-dir, json, search, sandbox`)
-    console.log(`  ${violet('/option <k> <v>')} set a run option — e.g. /option image ./shot.png, /option search on`)
-    console.log(`  ${violet('/sessions')}       list saved Akorith sessions for this folder`)
-    console.log(`  ${violet('/resume --last')}  resume a saved session; use /sessions --all to browse everything`)
-    console.log(`  ${violet('/fork <id>')}      fork a session into a fresh branch of work`)
-    console.log(`  ${violet('/review')}         review the current diff; supports --uncommitted, --base, --commit`)
-    console.log(`  ${violet('/doctor')}         diagnose local CLIs, auth helpers, and global Akorith install`)
-    console.log(`  ${violet('/connect')}        show & toggle GitHub, git, npm integrations`)
-    console.log(`  ${violet('/cd <dir>')}       change the active working directory`)
-    console.log(`  ${violet('/new')}            start fresh conversations (all providers)`)
-    console.log(`  ${violet('/clear')}          clear the screen`)
-    console.log(`  ${violet('/exit')}           leave Akorith`)
-    console.log(`  ${violet('!<command>')}      run a shell command in place (e.g. !git status)`)
-    console.log()
-    console.log(dim('Anything else is sent to the active model. Conversations continue per'))
-    console.log(dim('provider until /new. Ctrl+C cancels a running turn; twice exits.'))
-    console.log(dim('⌘M/Alt+M opens the model picker · ctrl+p opens the command palette · ctrl+t cycles reasoning.'))
+    printPanelBlock({
+      title: 'Commands',
+      subtitle: 'Akorith workspace',
+      lines: rows,
+      footer: 'ctrl+p palette · ctrl+t reasoning · Ctrl+C cancels/runs exit guard',
+    })
     console.log()
   }
 
@@ -1250,8 +1400,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       return
     }
     if (input === '/clear') {
-      console.clear()
-      printStatus()
+      renderSplash()
       return
     }
     if (input === '/help') {
@@ -1347,7 +1496,12 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     if (input.startsWith('/review ')) {
       const review = parseReview(input.slice(7).trim())
       console.log()
-      console.log(rule(`${formatModel(selection)} · review`, violet, '╭'))
+      printTurnHeader({
+        title: 'Review',
+        subtitle: formatModel(selection),
+        prompt: review.prompt || 'Review the selected diff.',
+        footer: 'read-only review turn',
+      })
       const startedAt = Date.now()
       const code = await runReviewCommand(
         { selection, mode: 'view', cwd: process.cwd(), options: turnOptions, review },
@@ -1355,7 +1509,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       )
       activeChild = null
       const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
-      console.log(code === 0 ? rule(`✓ review done · ${seconds}s`, green, '╰') : rule(`✗ review exited · code ${code}`, red, '╰'))
+      printTurnFooter({ code, seconds, title: 'Review complete' })
       console.log()
       printStatus()
       return
@@ -1409,6 +1563,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       mode = wanted
       persist({ mode })
       if (activeSession) activeSession = touchSession(activeSession.id, { mode }) || activeSession
+      refreshPrompt()
       console.log(green('✓ ') + 'Mode set to ' + bold(mode) + ' ' + faint('— ' + MODES[mode]))
       return
     }
@@ -1495,13 +1650,16 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       return
     }
 
-    // A real prompt — hand it to the active provider, streaming. The turn is
-    // framed by a labeled top rule and a single closing rule that carries the
-    // outcome, so the model's output sits cleanly between two thin dividers.
+    // A real prompt — hand it to the active provider, streaming. The turn opens
+    // and closes with the same panel chrome used by the rest of the workspace.
     const session = ensureActiveSession()
     console.log()
-    console.log(rule(`${formatModel(selection)} · ${mode}`, violet, '╭'))
-    console.log(violet('  ▸ ') + dim(PROVIDERS[selection.provider].codename.toLowerCase()) + faint(' answering'))
+    printTurnHeader({
+      title: mode === 'act' ? 'Build' : 'Plan',
+      subtitle: formatModel(selection),
+      prompt: input,
+      footer: mode === 'act' ? 'edits and commands may run' : 'read-only turn',
+    })
     const startedAt = Date.now()
     const transcriptBuf = []
     const code = await runTurn(
@@ -1509,18 +1667,13 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       {
         onSpawn: (child) => (activeChild = child),
         onLine: (plain) => { if (plain.trim()) transcriptBuf.push(plain) },
+        onUsage: (usage) => mergeUsageTotals(usageTotals, usage),
       },
     )
     activeChild = null
     const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
-    if (code === 0) {
-      started[selection.provider] = true
-      console.log(rule(`✓ done · ${seconds}s`, green, '╰'))
-    } else if (code === 130) {
-      console.log(rule('■ cancelled', yellow, '╰'))
-    } else {
-      console.log(rule(`✗ exited · code ${code}`, red, '╰'))
-    }
+    if (code === 0) started[selection.provider] = true
+    printTurnFooter({ code, seconds })
     activeSession = recordTurn(session.id, { selection, mode, provider: selection.provider, prompt: input, code }) || activeSession
     recordSessionTranscript(session.id, {
       provider: selection.provider,
@@ -1558,7 +1711,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     }
     busy = false
     if (closing) finish()
-    rl.prompt()
+    promptIdle()
   }
 
   if (process.stdin.isTTY) {
@@ -1591,21 +1744,38 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
           clearModelPicker()
           closeModelPicker()
           console.log(dim('Model switch cancelled.'))
-          rl.prompt()
+          rl.line = ''
+          rl.cursor = 0
+          promptIdleSoon()
+          return
+        }
+        if ((key.name === 'q' || str === 'q') && !key.ctrl) {
+          clearModelPicker()
+          closeModelPicker()
+          console.log(dim('Model switch cancelled.'))
+          rl.line = ''
+          rl.cursor = 0
+          promptIdleSoon()
           return
         }
       }
       if (awaitingSessionPick) {
         if (key.name === 'up') { moveSessionPicker(-1); return }
         if (key.name === 'down') { moveSessionPicker(1); return }
-        if (key.name === 'escape' || (key.name === 'q' && !key.ctrl)) {
+        if (key.name === 'escape' || ((key.name === 'q' || str === 'q') && !key.ctrl)) {
           clearSessionPicker()
           closeSessionPicker()
           console.log(dim('Session picker cancelled.'))
-          rl.prompt()
+          rl.line = ''
+          rl.cursor = 0
+          promptIdleSoon()
           return
         }
-        if (key.name === 'return') { resumeSessionPick(); return }
+        if (key.name === 'return') {
+          if (sessionPickerJustOpened) return
+          resumeSessionPick()
+          return
+        }
         if (key.name === 'r' && key.ctrl) { renameSessionPick(); return }
         if (key.name === 'd' && key.ctrl) { deleteSessionPick(); return }
         if (key.name === 'e' && !key.ctrl) { exportSessionPick(); return }
@@ -1617,13 +1787,13 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       if (awaitingPalette) {
         if (key.name === 'up') { movePalette(-1); return }
         if (key.name === 'down') { movePalette(1); return }
-        if (key.name === 'escape') {
+        if (key.name === 'escape' || ((key.name === 'q' || str === 'q') && !key.ctrl)) {
           clearPalette()
           closePalette()
           console.log(dim('Palette cancelled.'))
           rl.line = ''
           rl.cursor = 0
-          rl.prompt(true)
+          promptIdleSoon()
           return
         }
         if (key.name === 'return') { runPalette(); return }
@@ -1638,7 +1808,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         }
         if (key.name === 'up') { moveReview(-1); return }
         if (key.name === 'down') { moveReview(1); return }
-        if (key.name === 'escape' || (key.name === 'q' && !key.ctrl)) { clearReview(); closeReview(); console.log(dim('Review browser closed.')); rl.prompt(true); return }
+        if (key.name === 'escape' || (key.name === 'q' && !key.ctrl)) { clearReview(); closeReview(); console.log(dim('Review browser closed.')); promptIdleSoon(); return }
         if (str === '/' || key.name === '/') { reviewFiltering = true; redrawReview(); return }
         if (key.name === 'c' && !key.ctrl) { setReviewFilter(''); return }
         if (key.name === 'return' || key.name === 'right' || key.name === 'space') { toggleReview(); return }
@@ -1669,7 +1839,18 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   rl.on('line', (line) => {
-    rewriteSubmittedLine(line)
+    if (splashActive) {
+      splashActive = false
+      promptBoxActive = false
+      if (process.stdout.isTTY) {
+        readline.cursorTo(process.stdout, 0, 0)
+        readline.clearScreenDown(process.stdout)
+      }
+    } else if (promptBoxActive) {
+      clearPromptBox({ afterSubmit: true })
+    } else {
+      rewriteSubmittedLine(line, rl.getPrompt())
+    }
     queue.push(line)
     void pump()
   })
@@ -1695,10 +1876,8 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     if (!busy) finish()
   })
 
-  // Live reflow on resize: while idle redraw the status row; while the model
-  // picker is open, repaint it so column-driven widths stay aligned. During a
-  // turn the pinned spinner handles its own wrap on its next redraw, so we
-  // don't touch the running transcript.
+  // Live reflow on resize: repaint active overlays and the Grok-style splash
+  // screen in place. During a turn the pinned spinner owns the active line.
   function onResize() {
     if (awaitingModelPick) {
       redrawModelPicker()
@@ -1717,12 +1896,19 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       return
     }
     if (activeChild || busy || closing) return
-    readline.clearLine(process.stdout, 0)
-    readline.cursorTo(process.stdout, 0)
-    printStatus()
-    rl.prompt(true)
+    if (splashActive) {
+      renderSplash()
+      promptNow(true)
+      return
+    }
+    if (promptBoxActive) {
+      clearPromptBox()
+      promptIdle()
+      return
+    }
+    promptIdle()
   }
   process.stdout.on('resize', onResize)
 
-  rl.prompt()
+  promptNow()
 }
