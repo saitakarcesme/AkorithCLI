@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { splitGraphemes } from './ui.js'
 
 export class InputEditor {
   constructor({ historyLimit = 200, complete = null } = {}) {
@@ -21,7 +22,7 @@ export class InputEditor {
   }
 
   chars() {
-    return [...this.value]
+    return splitGraphemes(this.value)
   }
 
   setValue(value, cursor = null) {
@@ -33,7 +34,7 @@ export class InputEditor {
 
   insert(value) {
     const chars = this.chars()
-    const addition = [...String(value ?? '')]
+    const addition = splitGraphemes(value)
     chars.splice(this.cursor, 0, ...addition)
     this.value = chars.join('')
     this.cursor += addition.length
@@ -165,7 +166,7 @@ export class ScreenInputAdapter extends EventEmitter {
   }
 
   set line(value) {
-    this.editor.setValue(value, Math.min(this.editor.cursor, [...String(value ?? '')].length))
+    this.editor.setValue(value, Math.min(this.editor.cursor, splitGraphemes(value).length))
     this.render()
   }
 
