@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   fitText, grokInputBoxLines, grokInputPrompt, grokSplashLines, panelLines,
-  setTerminalAdapter, startSpinner, stripAnsi, userMessageLines, visibleLength, wrapWords,
+  prefersReducedMotion, setTerminalAdapter, startSpinner, stripAnsi, userMessageLines, visibleLength, wrapWords,
 } from '../src/ui.js'
 
 test('wrapWords elides overlong tokens instead of splitting words', () => {
@@ -30,6 +30,14 @@ test('spinner renders through the full-screen adapter without raw cursor writes'
   assert.ok(events.some(([kind, value]) => kind === 'spinner' && value.includes('reading files')))
   assert.ok(events.some(([kind, value]) => kind === 'line' && value === 'provider output'))
   assert.deepEqual(events.at(-1), ['spinner', ''])
+})
+
+test('reduced motion preference is opt in through the environment', () => {
+  const previous = process.env.AKORITH_REDUCED_MOTION
+  process.env.AKORITH_REDUCED_MOTION = '1'
+  assert.equal(prefersReducedMotion(), true)
+  if (previous == null) delete process.env.AKORITH_REDUCED_MOTION
+  else process.env.AKORITH_REDUCED_MOTION = previous
 })
 
 test('panelLines keeps every rendered row inside the requested width', () => {
