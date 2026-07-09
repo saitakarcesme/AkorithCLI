@@ -70,6 +70,19 @@ export function headerLines({ width, height, model = 'default', mode = 'act', cw
   ]
 }
 
+export function contextUsageMeter(total, context, width = 8) {
+  const raw = String(context || '').trim().toLowerCase()
+  const match = raw.match(/^(\d+(?:\.\d+)?)\s*([km])$/)
+  if (!match) return `ctx ${raw || 'provider'}`
+  const factor = match[2] === 'm' ? 1_000_000 : 1_000
+  const limit = Number(match[1]) * factor
+  const ratio = Math.max(0, Math.min(1, (Number(total) || 0) / limit))
+  const size = Math.max(3, Number(width) || 8)
+  const used = Math.round(ratio * size)
+  const warning = ratio >= 0.95 ? '⚠' : ratio >= 0.8 ? '!' : ''
+  return `ctx [${'█'.repeat(used)}${'░'.repeat(size - used)}] ${Math.round(ratio * 100)}%${warning}`
+}
+
 function wrapEditorInput(input, cursor, width) {
   const chars = [...String(input ?? '')]
   const cursorIndex = Math.max(0, Math.min(Number(cursor) || 0, chars.length))
@@ -107,6 +120,7 @@ export function composerLayout({
   model = 'default',
   mode = 'act',
   usage = '0 tokens',
+  usageTotal = 0,
   context = 'provider',
   queue = 0,
   busy = false,
@@ -130,9 +144,10 @@ export function composerLayout({
     boxLines.push(`│ ${marker}${padVisible(row, contentWidth)} │`)
   })
   boxLines.push(boxBorder('╰', '─', '╯', outerWidth))
+  const contextMeter = contextUsageMeter(usageTotal, context, tier === 'wide' ? 10 : 6)
   const status = tier === 'compact'
     ? `${fitText(model, Math.max(8, outerWidth - 24), { middle: true })} · ${mode} · ${usage}`
-    : `${model} · ${mode} · ctx ${context} · ${usage}${queue ? ` · queued ${queue}` : ''}`
+    : `${model} · ${mode} · ${contextMeter} · ${usage}${queue ? ` · queued ${queue}` : ''}`
   boxLines.push(plainCell(` ${status}`, outerWidth))
   if (tier !== 'compact') boxLines.push(plainCell(' Enter send · Shift+Enter newline · Ctrl+P commands · Ctrl+C cancel', outerWidth))
   const lines = boxLines.map((line) => ansiCell(indent + line, viewport.width))
@@ -223,6 +238,7 @@ export function buildFrame({
   input = '',
   cursor = 0,
   usage = '0 tokens',
+  usageTotal = 0,
   context = 'provider',
   queue = 0,
   transcript = [],
@@ -233,7 +249,7 @@ export function buildFrame({
 } = {}) {
   const viewport = normalizeViewport(width, height)
   const header = headerLines({ ...viewport, model, mode, cwd, branch, dirty, session, busy, connected })
-  const composer = composerLayout({ ...viewport, input, cursor, model, mode, usage, context, queue, busy })
+  const composer = composerLayout({ ...viewport, input, cursor, model, mode, usage, usageTotal, context, queue, busy })
   const separator = fitScreenLine(faint('─'.repeat(viewport.width)), viewport.width)
   const fixedRows = header.length + 1 + composer.lines.length
   const bodyHeight = Math.max(1, viewport.height - fixedRows)
