@@ -438,6 +438,27 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     })
   }
 
+  let terminalRestored = false
+  function restoreTerminal() {
+    if (terminalRestored) return
+    terminalRestored = true
+    setTerminalAdapter(null)
+    if (pasteNoticeTimer) clearTimeout(pasteNoticeTimer)
+    process.stdin.setRawMode?.(false)
+    terminalScreen?.stop()
+    console.log = nativeConsole.log
+    console.error = nativeConsole.error
+    console.clear = nativeConsole.clear
+  }
+
+  function terminateFromSignal() {
+    if (activeChild) activeChild.kill('SIGTERM')
+    restoreTerminal()
+    process.exit(0)
+  }
+  process.once('SIGTERM', terminateFromSignal)
+  process.once('SIGHUP', terminateFromSignal)
+
   tintCursor()
   renderSplash({ tip: bootNotice ? stripAnsi(bootNotice) : null })
 
@@ -1869,14 +1890,8 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   function finish() {
     resetCursor()
     if (terminalScreen) {
-      setTerminalAdapter(null)
-      if (pasteNoticeTimer) clearTimeout(pasteNoticeTimer)
-      process.stdin.setRawMode?.(false)
-      terminalScreen.stop()
+      restoreTerminal()
       terminalScreen = null
-      console.log = nativeConsole.log
-      console.error = nativeConsole.error
-      console.clear = nativeConsole.clear
       nativeConsole.log(dim('Akorith out. Your work stayed on your machine.'))
     } else {
       console.log(dim('\nAkorith out. Your work stayed on your machine.'))
