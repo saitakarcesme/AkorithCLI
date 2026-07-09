@@ -17,6 +17,10 @@ export function setTerminalAdapter(adapter = null) {
   terminalAdapter = adapter
 }
 
+export function prefersReducedMotion() {
+  return process.env.AKORITH_REDUCED_MOTION === '1' || process.env.REDUCE_MOTION === '1'
+}
+
 const wrap = (open, close) => (s) => (enabled ? `\x1b[${open}m${s}\x1b[${close}m` : String(s))
 
 // hex color with a 256-color fallback for terminals without truecolor
@@ -470,7 +474,7 @@ export function banner(version) {
 // letters for ~2s, then settles. Skipped when not a truecolor TTY.
 export async function animateBanner(version) {
   const cols = terminalColumns()
-  if (!process.stdout.isTTY || !truecolor || cols < 58) {
+  if (!process.stdout.isTTY || !truecolor || cols < 58 || prefersReducedMotion()) {
     console.log(banner(version))
     return
   }
@@ -551,12 +555,12 @@ export function startSpinner(codename, display) {
     const adapter = terminalAdapter
     const draw = () => adapter.setSpinner(line())
     draw()
-    const timer = setInterval(() => {
+    const timer = prefersReducedMotion() ? null : setInterval(() => {
       if (stopped) return
       tick++
       draw()
     }, 110)
-    timer.unref?.()
+    timer?.unref?.()
     return {
       log(out) {
         adapter.append(out)
@@ -567,7 +571,7 @@ export function startSpinner(codename, display) {
       },
       stop() {
         stopped = true
-        clearInterval(timer)
+        if (timer) clearInterval(timer)
         adapter.setSpinner('')
       },
     }
@@ -575,12 +579,12 @@ export function startSpinner(codename, display) {
   const draw = () => process.stdout.write('\r' + line() + '\x1b[K')
   const clear = () => process.stdout.write('\r\x1b[K')
   draw()
-  const timer = setInterval(() => {
+  const timer = prefersReducedMotion() ? null : setInterval(() => {
     if (stopped) return
     tick++
     draw()
   }, 110)
-  timer.unref?.()
+  timer?.unref?.()
   return {
     log(out) {
       if (stopped) return console.log(out)
@@ -594,7 +598,7 @@ export function startSpinner(codename, display) {
     },
     stop() {
       stopped = true
-      clearInterval(timer)
+      if (timer) clearInterval(timer)
       clear()
     },
   }
