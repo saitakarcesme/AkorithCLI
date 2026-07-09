@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  buildFrame,
   composerLayout,
   fitScreenLine,
   headerLines,
@@ -57,3 +58,47 @@ test('fitScreenLine returns exact-width rows', () => {
   assert.equal(visibleLength(fitScreenLine('x'.repeat(200), 48)), 48)
 })
 
+test('buildFrame reserves header, body, and bottom composer rows', () => {
+  const frame = buildFrame({
+    width: 96,
+    height: 30,
+    version: '0.1.0',
+    model: 'codex/gpt-5.5',
+    cwd: '/workspace/akorithcli',
+    input: 'typed inside the composer',
+    cursor: 25,
+  })
+
+  assert.equal(frame.lines.length, 30)
+  assert.ok(frame.lines.every((line) => visibleLength(line) === 96))
+  assert.ok(frame.lines.some((line) => line.includes('AKORITH')))
+  assert.ok(frame.lines.some((line) => line.includes('typed inside the composer')))
+  assert.ok(frame.lines.some((line) => line.includes('Your agent workspace is ready')))
+  assert.ok(frame.cursorRow > frame.bodyHeight)
+  assert.ok(frame.cursorRow <= 30)
+})
+
+test('buildFrame keeps composer anchored after transcript growth', () => {
+  const short = buildFrame({ width: 72, height: 22, input: 'draft', cursor: 5, transcript: ['one'] })
+  const long = buildFrame({ width: 72, height: 22, input: 'draft', cursor: 5, transcript: Array.from({ length: 100 }, (_, index) => `line ${index}`) })
+
+  assert.equal(short.cursorRow, long.cursorRow)
+  assert.equal(short.cursorColumn, long.cursorColumn)
+  assert.equal(short.lines.at(-4), long.lines.at(-4))
+})
+
+test('buildFrame reflows compact terminals without horizontal overflow', () => {
+  for (const [width, height] of [[32, 10], [40, 12], [52, 16], [63, 40]]) {
+    const frame = buildFrame({
+      width,
+      height,
+      model: 'opencode/very-long-model-name',
+      cwd: '/deep/path/to/a/workspace',
+      input: 'a long draft that must wrap while remaining inside the closed composer',
+      cursor: 70,
+      transcript: ['output ' + 'x'.repeat(200)],
+    })
+    assert.equal(frame.lines.length, Math.max(10, height))
+    assert.ok(frame.lines.every((line) => visibleLength(line) === Math.max(32, width)))
+  }
+})
