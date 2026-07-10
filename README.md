@@ -45,6 +45,8 @@ npm install -g .
 ❯ /fork <session-id>                            # fork a saved session into a fresh branch of work
 ❯ /review                                       # browse the diff file-by-file (/, n/p, r)
 ❯ /review --uncommitted                         # review staged, unstaged, and untracked changes
+❯ /timeline                                     # browse transcript rows
+❯ /timeline search authentication               # jump to the latest matching row
 ❯ /doctor                                       # diagnose local provider CLIs + global install
 ❯ /model                                        # open the model picker (↑/↓, Enter)
 ❯ /model codex                                  # switch to Codex (Olympus)
@@ -126,6 +128,27 @@ reflows with the terminal width without splitting words in the middle.
 The live `akoriting` line shows the current high-level phase while a model is working.
 Akorith shows provider-supplied output and high-level phases; it does not expose
 hidden private chain-of-thought from models.
+
+### Responsive terminal workspace
+
+Interactive TTY sessions use one atomic full-screen frame: a persistent Akorith
+header, a scrollable transcript/overlay area, and a closed composer anchored to
+the bottom edge. The layout switches between compact, regular, and wide modes,
+keeps the cursor stable during resize, and measures emoji/CJK text by terminal
+cell width. Non-TTY and `TERM=dumb` output keeps the plain script-friendly flow.
+
+- `Enter` sends; `Shift+Enter` or `Ctrl+J` inserts a newline.
+- `↑`/`↓` recall prompt history and restore the unfinished draft.
+- `Ctrl+P` opens the filterable command palette; `Alt+M` opens models where supported.
+- `PageUp`/`PageDown` scroll the transcript; `Ctrl+X`, then `G`, opens `/timeline`.
+- `Ctrl+T` cycles reasoning visibility; `Ctrl+C` cancels a turn or activates the exit guard.
+- `AKORITH_REDUCED_MOTION=1` disables animation, `AKORITH_MONO=1` disables brand color,
+  and `AKORITH_NO_FULLSCREEN=1` selects the classic streaming fallback.
+
+The footer reports model, permission mode, provider context, cumulative tokens,
+queue depth, and context pressure when the provider has a known context limit.
+The header retains session/turn identity, working directory, git branch/dirty
+state, provider availability, and working/ready status after every turn.
 
 ### Permission modes
 
