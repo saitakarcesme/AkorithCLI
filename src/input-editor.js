@@ -131,11 +131,11 @@ export class InputEditor {
       this.deleteWordBackward()
       return { type: 'change' }
     }
-    if (key.name === 'return') {
+    if (str === '\n' || (key.ctrl && key.name === 'j')) { this.insert('\n'); return { type: 'change' } }
+    if (key.name === 'return' || key.name === 'enter') {
       if (key.shift || key.meta) { this.insert('\n'); return { type: 'change' } }
       return this.submit()
     }
-    if (key.ctrl && key.name === 'j') { this.insert('\n'); return { type: 'change' } }
     if (key.name === 'backspace') { this.deleteBackward(); return { type: 'change' } }
     if (key.name === 'delete') { this.deleteForward(); return { type: 'change' } }
     if (key.name === 'left') { this.cursor = Math.max(0, this.cursor - 1); return { type: 'change' } }
