@@ -47,6 +47,8 @@ test('supports multiline composer input', () => {
   editor.handle('\r', { name: 'return', shift: true })
   editor.insert('line two')
   assert.equal(editor.value, 'line one\nline two')
+  editor.handle('\n', { name: 'enter' })
+  assert.equal(editor.value, 'line one\nline two\n')
 })
 
 test('supports familiar readline editing shortcuts', () => {
