@@ -134,6 +134,7 @@ export function composerLayout({
   queue = 0,
   busy = false,
   label = 'Message',
+  showStatus = true,
 } = {}) {
   const viewport = normalizeViewport(width, height)
   const tier = layoutTier(viewport.width, viewport.height)
@@ -154,18 +155,17 @@ export function composerLayout({
     boxLines.push(`│ ${marker}${padVisible(row, contentWidth)} │`)
   })
   boxLines.push(boxBorder('╰', '─', '╯', outerWidth))
-  const contextMeter = contextUsageMeter(usageTotal, context, tier === 'wide' ? 10 : 6)
-  const status = tier === 'compact'
-    ? `${fitText(model, Math.max(8, outerWidth - 24), { middle: true })} · ${mode} · ${usage}`
-    : `${model} · ${mode} · ${contextMeter} · ${usage}${queue ? ` · queued ${queue}` : ''}`
-  boxLines.push(plainCell(` ${status}`, outerWidth))
-  if (tier !== 'compact') boxLines.push(plainCell(' Enter send · Shift+Enter newline · Ctrl+P commands · Ctrl+C cancel', outerWidth))
+  if (showStatus) {
+    const modelBudget = Math.max(8, outerWidth - visibleLength(mode) - visibleLength(usage) - 10)
+    const status = `${fitText(model, modelBudget, { middle: true })} · ${mode} · ${usage}${queue ? ` · +${queue}` : ''}`
+    boxLines.push(plainCell(` ${status}`, outerWidth))
+  }
   const lines = boxLines.map((line) => ansiCell(indent + line, viewport.width))
   const inputRow = 1 + wrapped.cursorRow - firstVisible
   const inputColumn = left + 4 + wrapped.cursorColumn
   return {
     lines,
-    cursorRow: Math.max(1, Math.min(inputRow, lines.length - 3)),
+    cursorRow: Math.max(1, Math.min(inputRow, visibleRows.length)),
     cursorColumn: Math.max(left + 4, Math.min(inputColumn, left + outerWidth - 2)),
     firstVisible,
     tier,
