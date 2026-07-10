@@ -133,6 +133,7 @@ export function composerLayout({
   context = 'provider',
   queue = 0,
   busy = false,
+  label = 'Message',
 } = {}) {
   const viewport = normalizeViewport(width, height)
   const tier = layoutTier(viewport.width, viewport.height)
@@ -147,7 +148,7 @@ export function composerLayout({
   const firstVisible = Math.max(0, Math.min(wrapped.cursorRow - maxInputRows + 1, Math.max(0, wrapped.rows.length - maxInputRows)))
   const visibleRows = wrapped.rows.slice(firstVisible, firstVisible + maxInputRows)
   while (visibleRows.length < Math.min(2, maxInputRows)) visibleRows.push('')
-  const boxLines = [boxBorder('╭', '─', '╮', outerWidth, busy ? 'Working' : 'Message')]
+  const boxLines = [boxBorder('╭', '─', '╮', outerWidth, busy ? 'Working' : label)]
   visibleRows.forEach((row, index) => {
     const marker = index === 0 && firstVisible === 0 ? '› ' : '  '
     boxLines.push(`│ ${marker}${padVisible(row, contentWidth)} │`)
@@ -250,6 +251,7 @@ export function buildFrame({
   usageTotal = 0,
   context = 'provider',
   queue = 0,
+  composerLabel = 'Message',
   transcript = [],
   transcriptOffset = 0,
   overlay = null,
@@ -258,7 +260,7 @@ export function buildFrame({
 } = {}) {
   const viewport = normalizeViewport(width, height)
   const header = headerLines({ ...viewport, model, mode, cwd, branch, dirty, session, busy, connected })
-  const composer = composerLayout({ ...viewport, input, cursor, model, mode, usage, usageTotal, context, queue, busy })
+  const composer = composerLayout({ ...viewport, input, cursor, model, mode, usage, usageTotal, context, queue, busy, label: composerLabel })
   const separator = fitScreenLine(faint('─'.repeat(viewport.width)), viewport.width)
   const fixedRows = header.length + 1 + composer.lines.length
   const bodyHeight = Math.max(1, viewport.height - fixedRows)
