@@ -37,7 +37,7 @@ Usage:
   akorith codex <command> ...          pass through to the Codex CLI
 
 Common options:
-  -m, --model <spec>                   provider/model, e.g. claude/sonnet or codex/gpt-5-codex
+  -m, --model <spec>                   provider/model, e.g. claude/sonnet or codex/gpt-5.5-high
   --mode <view|act>                    read-only or acting mode; default act
   -C, --cd <dir>                       set working directory
   --add-dir <dir>                      extra writable directory for supported providers

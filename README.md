@@ -19,10 +19,10 @@ npm install -g akorith
 
 Then type `akorith` in any terminal.
 
-Akorith's interactive workspace opens with a Grok Build-style start screen:
-a bordered launch card, the colorful pixel Akorith wordmark, a bottom input box,
-model/context/token status in the input footer, and panel-based pickers for
-models, sessions, commands, and reviews.
+Akorith's interactive workspace keeps the colorful pixel wordmark at the top,
+the transcript directly beneath it, and a closed input box anchored to the bottom.
+Wide terminals add a workspace and plan sidebar; narrower terminals retain a
+short status footer without crowding the composer.
 
 ### From this repo (development)
 
@@ -63,8 +63,8 @@ One-shot mode (scriptable):
 
 ```bash
 akorith -p "summarize the diff" -m claude/haiku
-akorith exec "fix the failing tests" -m codex/gpt-5-codex -C ~/code/app --search
-akorith review --uncommitted -m codex/gpt-5-codex
+akorith exec "fix the failing tests" -m codex/gpt-5.5-high -C ~/code/app --search
+akorith review --uncommitted -m codex/gpt-5.5-high
 akorith resume --last "continue from where we left off"
 ```
 
@@ -145,8 +145,10 @@ cell width. Non-TTY and `TERM=dumb` output keeps the plain script-friendly flow.
 - `AKORITH_REDUCED_MOTION=1` disables animation, `AKORITH_MONO=1` disables brand color,
   and `AKORITH_NO_FULLSCREEN=1` selects the classic streaming fallback.
 
-The footer reports model, permission mode, provider context, cumulative tokens,
-queue depth, and context pressure when the provider has a known context limit.
+Wide terminals report model, permission mode, provider context, cumulative
+tokens, queue depth, and active plan tasks in the right sidebar. Narrower
+terminals show a compact model/mode/token footer. Keyboard shortcuts are kept
+out of the composer and are available through `/help`.
 The header retains session/turn identity, working directory, git branch/dirty
 state, provider availability, and working/ready status after every turn.
 
