@@ -107,7 +107,11 @@ export class InputEditor {
 
   handle(str, key = {}) {
     if (key.ctrl && key.name === 'c') return { type: 'interrupt' }
-    if (key.ctrl && key.name === 'd' && !this.value) return { type: 'eof' }
+    if (key.ctrl && key.name === 'd') {
+      if (!this.value) return { type: 'eof' }
+      this.deleteForward()
+      return { type: 'change' }
+    }
     if (key.ctrl && key.name === 'p') return { type: 'palette' }
     if (key.ctrl && key.name === 'l') return { type: 'clear' }
     if (key.ctrl && key.name === 'a') { this.cursor = 0; return { type: 'change' } }
