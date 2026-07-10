@@ -572,7 +572,7 @@ const BRAILLE = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 // just cycling one dot at a time.
 const DOTS = ['   ', '·  ', '·· ', '···', ' ··', '  ·']
 
-// "akoriting" with a highlight that sweeps across the word — a shimmer, brand
+// "Akoriting" with a highlight that sweeps across the word — a shimmer, brand
 // ramp on the lit letter, bright white just ahead/behind, dim elsewhere.
 function shimmer(word, tick) {
   const chars = [...word]
@@ -607,13 +607,14 @@ export function startSpinner(codename, display) {
     return plain.slice(0, Math.max(0, max - 1)) + '…'
   }
   const line = () => {
+    const indent = '    '
     const seconds = Math.round((Date.now() - startedAt) / 1000)
     const [r, g, b] = rampColor((tick % 20) / 20)
     const glyph = `\x1b[38;2;${r};${g};${b}m${BRAILLE[tick % BRAILLE.length]}\x1b[39m`
     const dots = dim(DOTS[tick % DOTS.length])
-    const meta = compact(`${codename} · ${seconds}s · ${status}`, Math.max(18, terminalColumns() - 20))
-    // e.g.  ⠹ akoriting···   atlantis · 5s
-    return `${glyph} ${shimmer('akoriting', tick)}${dots}   ${faint(meta)}`
+    const meta = compact(`${codename} · ${seconds}s · ${status}`, Math.max(18, terminalColumns() - 24))
+    // e.g.      ⠹ Akoriting···   atlantis · 5s
+    return `${indent}${glyph} ${shimmer('Akoriting', tick)}${dots}   ${faint(meta)}`
   }
   if (terminalAdapter) {
     const adapter = terminalAdapter
