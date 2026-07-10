@@ -52,4 +52,3 @@ test('viewport matrix keeps every UI state inside the terminal', () => {
     }), width, height)
   }
 })
-
