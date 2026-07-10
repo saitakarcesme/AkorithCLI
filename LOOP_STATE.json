@@ -1,9 +1,9 @@
 {
-  "phase": "analysis",
+  "phase": "release",
   "branch": "codex/responsive-terminal-ui",
   "baseline_commit": "1b2a704",
   "target_commits": 250,
-  "completed_commits": 0,
-  "status": "in_progress",
-  "next": "preserve and commit the existing responsive UI baseline, then introduce a viewport renderer"
+  "completed_commits": 278,
+  "status": "complete",
+  "next": "push codex/responsive-terminal-ui to origin"
 }
