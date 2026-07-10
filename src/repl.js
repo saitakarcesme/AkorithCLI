@@ -20,11 +20,9 @@ import { COMMAND_CATALOG, filterCatalog, fuzzyMatch } from './palette.js'
 import { filePatch, parseDiff } from './review.js'
 import { InputEditor, ScreenInputAdapter } from './input-editor.js'
 import { TerminalScreen } from './terminal-screen.js'
+import { loadCodexModels, modelSelectionSpec, normalizeModelSelection } from './models.js'
 
 const STATIC_MODEL_CHOICES = [
-  { label: 'Olympus · GPT-5 Codex', spec: 'codex/gpt-5-codex', aliases: ['gpt 5 codex', 'gpt-5 codex'] },
-  { label: 'Olympus · GPT-5.5 High', spec: 'codex/gpt-5.5-high', aliases: ['gpt 5.5 high', 'gpt-5.5-high'] },
-  { label: 'Olympus · GPT-5 High', spec: 'codex/gpt-5-high', aliases: ['gpt 5 high', 'gpt-5-high'] },
   { label: 'Atlantis · Claude Fable 5', spec: 'claude/claude-fable-5', aliases: ['fable', 'fable 5', 'fable 5 high'] },
   { label: 'Atlantis · Claude Opus', spec: 'claude/opus', aliases: ['opus'] },
   { label: 'Atlantis · Claude Sonnet', spec: 'claude/sonnet', aliases: ['sonnet'] },
@@ -40,6 +38,7 @@ const THINKING_MODES = {
 }
 
 let cachedOpenCodeModels = null
+let cachedCodexModels = null
 
 function terminalColumns() {
   const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
@@ -155,6 +154,32 @@ function staticChoice(choice) {
   return { ...choice, parsed: parseModelSpec(choice.spec), visibleSpec: choice.spec }
 }
 
+function codexChoices() {
+  if (!cachedCodexModels) {
+    cachedCodexModels = loadCodexModels()
+    if (!cachedCodexModels.length) {
+      cachedCodexModels = [
+        { slug: 'gpt-5.5', displayName: 'GPT-5.5', reasoningEfforts: ['high'], defaultReasoningEffort: 'medium' },
+        { slug: 'gpt-5.4', displayName: 'GPT-5.4', reasoningEfforts: ['high'], defaultReasoningEffort: 'medium' },
+        { slug: 'gpt-5.4-mini', displayName: 'GPT-5.4 Mini', reasoningEfforts: ['high'], defaultReasoningEffort: 'medium' },
+      ]
+    }
+  }
+  return cachedCodexModels.map((model) => {
+    const reasoningEffort = model.reasoningEfforts.includes('high') ? 'high' : model.defaultReasoningEffort
+    const parsed = normalizeModelSelection({ provider: 'codex', model: model.slug, reasoningEffort })
+    const effortLabel = reasoningEffort ? ` ${reasoningEffort[0].toUpperCase()}${reasoningEffort.slice(1)}` : ''
+    const spec = modelSelectionSpec(parsed)
+    return {
+      label: `Olympus · ${model.displayName}${effortLabel}`,
+      spec,
+      visibleSpec: spec,
+      parsed,
+      aliases: [model.slug, model.displayName, `${model.displayName}${effortLabel}`, `${model.slug}${reasoningEffort ? `-${reasoningEffort}` : ''}`],
+    }
+  })
+}
+
 function openCodeChoice(modelID) {
   const providerID = modelID.split('/')[0]
   const modelName = modelID.split('/').slice(1).join('/') || modelID
@@ -241,7 +266,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   let selection = null
   for (const spec of [initialModel, config.model, 'claude', 'codex', 'opencode']) {
     if (!spec) continue
-    const parsed = typeof spec === 'string' ? parseModelSpec(spec) : spec
+    const parsed = normalizeModelSelection(typeof spec === 'string' ? parseModelSpec(spec) : spec)
     if (parsed && available[parsed.provider]) {
       selection = parsed
       break
@@ -318,7 +343,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         if (!quiet) console.log(yellow('Session cwd is unavailable; staying in ') + homeRelative(process.cwd()))
       }
     }
-    if (session.selection && available[session.selection.provider]) selection = session.selection
+    if (session.selection && available[session.selection.provider]) selection = normalizeModelSelection(session.selection)
     else if (session.selection && !quiet) {
       console.log(yellow(`${session.selection.provider} CLI is not available; keeping ${formatModel(selection)}.`))
     }
@@ -635,16 +660,20 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function modelSpec(selection_) {
-    return `${selection_.provider}${selection_.model ? '/' + selection_.model : ''}`
+    return modelSelectionSpec(selection_)
   }
 
   function isCurrentChoice(choice) {
-    return choice.parsed && choice.parsed.provider === selection.provider && choice.parsed.model === selection.model
+    if (!choice.parsed) return false
+    const current = normalizeModelSelection(selection)
+    const candidate = normalizeModelSelection(choice.parsed)
+    return candidate.provider === current.provider && candidate.model === current.model && candidate.reasoningEffort === current.reasoningEffort
   }
 
   function modelChoices() {
     const seen = new Set()
     const choices = [
+      ...(available.codex ? codexChoices() : []),
       ...STATIC_MODEL_CHOICES.map(staticChoice),
       ...(available.opencode ? loadOpenCodeModels().map(openCodeChoice) : []),
     ]
@@ -758,11 +787,12 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   }
 
   function applyModel(parsed) {
-    if (!available[parsed.provider]) {
-      console.log(yellow(`${parsed.provider} CLI is not installed on this machine.`))
+    const next = normalizeModelSelection(parsed)
+    if (!available[next.provider]) {
+      console.log(yellow(`${next.provider} CLI is not installed on this machine.`))
       return false
     }
-    selection = parsed
+    selection = next
     persist({ model: modelSpec(selection) })
     if (activeSession) activeSession = touchSession(activeSession.id, { selection }) || activeSession
     refreshPrompt()
@@ -1806,6 +1836,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     if (input === '/new') {
       resetStarted()
       activeSession = null
+      terminalScreen?.clearTodos()
       console.log(dim('Fresh start — the next message opens a new conversation.'))
       return
     }
