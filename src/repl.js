@@ -1581,7 +1581,25 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       title: 'Commands',
       subtitle: 'Akorith workspace',
       lines: rows,
-      footer: 'ctrl+p palette · ctrl+t reasoning · Ctrl+C cancels/runs exit guard',
+      footer: '/help reopens this reference',
+    })
+    const shortcut = (keys, desc) => `${violet(padVisible(keys, cmdBudget))} ${faint(fitText(desc, descBudget))}`
+    printPanelBlock({
+      title: 'Keyboard',
+      subtitle: 'shown here instead of below the composer',
+      lines: [
+        shortcut('Enter', 'send the current prompt'),
+        shortcut('Shift+Enter', 'insert a newline; Ctrl+J works everywhere'),
+        shortcut('Ctrl+P', 'open the searchable command palette'),
+        shortcut('Alt+M', 'open the model picker when supported by the terminal'),
+        shortcut('↑ / ↓', 'move picker selection or recall prompt history'),
+        shortcut('PageUp/Down', 'scroll transcript without moving the composer'),
+        shortcut('Ctrl+X, G', 'open the transcript timeline'),
+        shortcut('Ctrl+T', 'cycle reasoning visibility'),
+        shortcut('Ctrl+C', 'cancel a turn; press twice while idle to exit'),
+        shortcut('Esc', 'close the active picker or overlay'),
+      ],
+      footer: 'Composer stays clean; shortcuts live in /help',
     })
     console.log()
   }
