@@ -19,7 +19,7 @@ import { runDoctorCommand, runReviewCommand, runUpdateCommand, buildReviewPatch 
 import { COMMAND_CATALOG, filterCatalog, fuzzyMatch } from './palette.js'
 import { filePatch, parseDiff } from './review.js'
 import { InputEditor, ScreenInputAdapter } from './input-editor.js'
-import { TerminalScreen } from './terminal-screen.js'
+import { terminalMouseEvent, TerminalScreen } from './terminal-screen.js'
 import { loadCodexModels, modelSelectionSpec, normalizeModelSelection } from './models.js'
 
 const STATIC_MODEL_CHOICES = [
@@ -1593,7 +1593,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         shortcut('Ctrl+P', 'open the searchable command palette'),
         shortcut('Alt+M', 'open the model picker when supported by the terminal'),
         shortcut('↑ / ↓', 'move picker selection or recall prompt history'),
-        shortcut('PageUp/Down', 'scroll transcript without moving the composer'),
+        shortcut('Wheel / PgUp', 'scroll transcript; wheel down or PageDown returns'),
         shortcut('Ctrl+X, G', 'open the transcript timeline'),
         shortcut('Ctrl+T', 'cycle reasoning visibility'),
         shortcut('Ctrl+C', 'cancel a turn; press twice while idle to exit'),
@@ -1989,6 +1989,18 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   if (process.stdin.isTTY) {
     readline.emitKeypressEvents(process.stdin, terminalScreen ? undefined : rl)
     process.stdin.on('keypress', (str, key = {}) => {
+      const mouse = terminalScreen ? terminalMouseEvent(key.sequence || str) : null
+      if (mouse) {
+        if (mouse.type === 'wheel') {
+          const selectionDelta = mouse.direction === 'up' ? -1 : 1
+          if (awaitingModelPick) moveModelPicker(selectionDelta)
+          else if (awaitingSessionPick) moveSessionPicker(selectionDelta)
+          else if (awaitingPalette) movePalette(selectionDelta)
+          else if (awaitingReview) moveReview(selectionDelta)
+          else terminalScreen.scroll(-selectionDelta * 3)
+        }
+        return
+      }
       // ctrl+t cycles reasoning visibility: hide → minimal → show → hide.
       // Works whether idle or mid-turn (applies to the next turn).
       if (key.name === 't' && key.ctrl) {
