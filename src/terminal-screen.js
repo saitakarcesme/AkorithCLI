@@ -441,7 +441,11 @@ export function extractPlanTodos(lines = []) {
     }
     const symbol = plain.match(/^([☐☑◐✓○●])\s+(.+)$/)
     if (symbol) {
-      upsert(symbol[2], { done: /[☑✓]/.test(symbol[1]), active: /[◐●]/.test(symbol[1]) })
+      const key = symbol[2].replace(/\s+/g, ' ').trim().toLowerCase()
+      const knownTask = todos.some((todo) => todo.text.toLowerCase() === key)
+      if (planMode || knownTask) {
+        upsert(symbol[2], { done: /[☑✓]/.test(symbol[1]), active: /[◐●]/.test(symbol[1]) })
+      }
       continue
     }
     if (!planMode) continue

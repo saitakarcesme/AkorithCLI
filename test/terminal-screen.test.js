@@ -213,3 +213,10 @@ test('extracts checklist and named plan items for the sidebar', () => {
     { text: 'Capture screenshots', done: false, active: true },
   ])
 })
+
+test('does not treat ordinary success notices as plan tasks', () => {
+  assert.deepEqual(extractPlanTodos([
+    '✓ Now talking to olympus · codex/gpt-5.4 · high',
+    '✓ Session saved',
+  ]), [])
+})
