@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   buildFrame,
   brandHeaderLines,
+  compactComposerModel,
   composerLayout,
   contextUsageMeter,
   extractPlanTodos,
@@ -49,6 +50,11 @@ test('composer keeps typed text inside a closed box', () => {
   assert.ok(layout.lines[1].trimEnd().endsWith('│'))
   assert.ok(layout.lines.some((line) => line.trimStart().startsWith('╰') && line.trimEnd().endsWith('╯')))
   assert.ok(layout.lines.every((line) => visibleLength(line) === 80))
+})
+
+test('narrow composer status drops duplicate provider branding', () => {
+  assert.equal(compactComposerModel('olympus · codex/gpt-5.5 · high'), 'gpt-5.5 · high')
+  assert.equal(compactComposerModel('gaia · opencode-go/glm-5.2'), 'glm-5.2')
 })
 
 test('composer scrolls multiline input to keep the cursor visible', () => {

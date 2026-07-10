@@ -175,6 +175,13 @@ export function fitScreenLine(value, width) {
   return ansiCell(value, normalizeViewport(width, MIN_ROWS).width)
 }
 
+export function compactComposerModel(value) {
+  const parts = stripAnsi(value).split(' · ').map((part) => part.trim()).filter(Boolean)
+  if (/^(?:olympus|atlantis|gaia|local)$/i.test(parts[0] || '')) parts.shift()
+  if (parts.length) parts[0] = parts[0].replace(/^(?:codex|claude|opencode(?:-go)?|ollama)\//i, '')
+  return parts.join(' · ') || 'default'
+}
+
 export function splashLines({ width, height, version = '', model = 'default', cwd = '~' } = {}) {
   const viewport = normalizeViewport(width, height)
   const tier = layoutTier(viewport.width, viewport.height)
@@ -349,7 +356,7 @@ export function buildFrame({
     height: viewport.height,
     input,
     cursor,
-    model,
+    model: compactComposerModel(model),
     mode,
     usage,
     usageTotal,
