@@ -204,6 +204,8 @@ test('extracts checklist and named plan items for the sidebar', () => {
     '2. Fix the responsive layout',
     '- [x] Add tests',
     '- [>] Capture screenshots',
+    '✓ Add tests',
+    '● Capture screenshots',
   ]), [
     { text: 'Inspect provider models', done: false, active: false },
     { text: 'Fix the responsive layout', done: false, active: false },

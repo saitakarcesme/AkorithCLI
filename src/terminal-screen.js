@@ -439,9 +439,9 @@ export function extractPlanTodos(lines = []) {
       upsert(checkbox[2], { done: /x/i.test(checkbox[1]), active: checkbox[1] === '>' })
       continue
     }
-    const symbol = plain.match(/^([☐☑◐])\s+(.+)$/)
+    const symbol = plain.match(/^([☐☑◐✓○●])\s+(.+)$/)
     if (symbol) {
-      upsert(symbol[2], { done: symbol[1] === '☑', active: symbol[1] === '◐' })
+      upsert(symbol[2], { done: /[☑✓]/.test(symbol[1]), active: /[◐●]/.test(symbol[1]) })
       continue
     }
     if (!planMode) continue
