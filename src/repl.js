@@ -1697,7 +1697,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       return
     }
     if (input === '/update') {
-      const code = runUpdateCommand({ local: true })
+      const code = runUpdateCommand({ local: true, onOutput: terminalScreen ? (line) => terminalScreen.append(line) : null })
       console.log(code === 0 ? green('✓ Akorith updated from this repo.') : red('Akorith update failed.'))
       return
     }
