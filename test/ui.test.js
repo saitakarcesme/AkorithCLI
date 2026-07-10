@@ -17,6 +17,7 @@ test('wrapWords elides overlong tokens instead of splitting words', () => {
 test('visible width accounts for emoji, CJK, and combining marks', () => {
   assert.equal(visibleLength('A🙂界'), 5)
   assert.equal(visibleLength('e\u0301'), 1)
+  assert.equal(visibleLength('🇹🇷'), 2)
   assert.equal(visibleLength('plain'), 5)
   assert.ok(visibleLength(fitText('🙂🙂🙂🙂', 5)) <= 5)
 })
