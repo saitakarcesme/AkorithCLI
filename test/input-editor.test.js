@@ -77,6 +77,13 @@ test('returns explicit global shortcut actions', () => {
   assert.equal(editor.handle('', { name: 'd', ctrl: true }).type, 'eof')
 })
 
+test('ctrl+d deletes forward when the draft is not empty', () => {
+  const editor = new InputEditor()
+  editor.setValue('abc', 1)
+  assert.equal(editor.handle('', { name: 'd', ctrl: true }).type, 'change')
+  assert.equal(editor.value, 'ac')
+})
+
 test('screen adapter preserves the readline contract used by the REPL', () => {
   let renders = 0
   const adapter = new ScreenInputAdapter({ render: () => renders++ })
