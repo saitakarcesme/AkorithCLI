@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { formatModel, parseModelSpec, PROVIDERS } from '../src/providers.js'
+import { codexErrorMessage, formatModel, parseModelSpec, PROVIDERS } from '../src/providers.js'
 
 test('Codex aliases become a valid model plus reasoning override', () => {
   const selection = parseModelSpec('codex/gpt-5.5-high')
@@ -13,4 +13,10 @@ test('Codex aliases become a valid model plus reasoning override', () => {
 
 test('Codex reasoning is visible in the current model label', () => {
   assert.equal(formatModel({ provider: 'codex', model: 'gpt-5.5-high' }), 'olympus · codex/gpt-5.5 · high')
+})
+
+test('Codex startup failures surface their API diagnostic', () => {
+  const line = '2026-07-10T00:00:00Z ERROR codex_api: unexpected status 400 Bad Request: {"detail":"The requested model is not supported."}'
+  assert.equal(codexErrorMessage(line), 'The requested model is not supported.')
+  assert.equal(codexErrorMessage('ordinary preamble'), '')
 })

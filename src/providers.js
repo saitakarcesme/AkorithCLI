@@ -259,6 +259,25 @@ export function formatModel(selection) {
   return `${p.codename.toLowerCase()} · ${p.id}/${model}${effort}`
 }
 
+export function codexErrorMessage(line) {
+  const plain = stripAnsi(line).replace(/\s+/g, ' ').trim()
+  if (!/\bERROR\b|not supported|invalid (?:request|model)|bad request/i.test(plain)) return ''
+  const jsonStart = plain.indexOf('{')
+  if (jsonStart >= 0) {
+    try {
+      const payload = JSON.parse(plain.slice(jsonStart))
+      const message = payload?.detail?.message || payload?.detail || payload?.error?.message || payload?.message
+      if (typeof message === 'string' && message.trim()) return message.trim()
+    } catch {
+      // Fall through to a readable plain-text diagnostic.
+    }
+  }
+  return plain
+    .replace(/^\S+\s+ERROR\s+/, '')
+    .replace(/^.*?Bad Request:\s*/i, '')
+    .trim()
+}
+
 // Per-provider output renderers: turn the raw CLI streams into a quiet,
 // readable feed. Every rendered line goes through print() (the spinner's log),
 // so the animated status line stays pinned at the bottom for the whole turn.
@@ -278,6 +297,7 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
     let lastBlank = true
     let thinkingOpen = false
     let tokenReport = null
+    const diagnostics = []
     const flow = createFlowLinePrinter(print)
     const finalAnswer = []
     const shownDiff = new Set() // codex reprints the cumulative diff; show each line once
@@ -350,6 +370,8 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
       },
       stderrLine(line) {
         const plain = stripAnsi(line).trimEnd()
+        const diagnostic = codexErrorMessage(plain)
+        if (diagnostic && !diagnostics.includes(diagnostic)) diagnostics.push(diagnostic)
         if (dashes < 2) {
           if (/^-{4,}$/.test(plain.trim())) dashes++
           return
@@ -403,6 +425,9 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
         // stderr log went missing (future codex versions?) — fall back to stdout
         if (!spokeFromLog && finalAnswer.some((l) => stripAnsi(l).trim())) {
           for (const line of finalAnswer) flow(line)
+        }
+        for (const diagnostic of diagnostics.slice(0, 3)) {
+          print(red('  ✗ Codex: ') + bright(diagnostic))
         }
         if (tokenReport) {
           reportUsage(tokenReport)
