@@ -10,6 +10,7 @@ import {
 } from './ui.js'
 import { highlight, normalizeLang } from './highlight.js'
 import { toolCardHeader, toolCardBody } from './toolcard.js'
+import { normalizeModelSelection } from './models.js'
 
 export const PROVIDERS = {
   claude: {
@@ -41,11 +42,12 @@ export const PROVIDERS = {
     display: 'Codex',
     codename: 'Olympus',
     bin: 'codex',
-    hint: 'pass any Codex model id (e.g. /model codex/gpt-5-codex)',
-    args({ prompt, model, resume, mode, options = {} }) {
+    hint: 'models come from your Codex install (e.g. /model codex/gpt-5.5-high)',
+    args({ prompt, model, reasoningEffort, resume, mode, options = {} }) {
       const args = resume ? ['exec', 'resume', '--last'] : ['exec']
       args.push('--skip-git-repo-check')
       if (model) args.push('-m', model)
+      if (reasoningEffort) args.push('-c', `model_reasoning_effort="${reasoningEffort}"`)
       for (const image of options.images || []) args.push('-i', image)
       if (!resume) {
         for (const dir of options.addDirs || []) args.push('--add-dir', dir)
@@ -237,7 +239,7 @@ export function parseModelSpec(spec) {
   const [id, ...rest] = spec.trim().split('/')
   const provider = PROVIDERS[id]
   if (!provider) return null
-  return { provider: provider.id, model: rest.join('/') || null }
+  return normalizeModelSelection({ provider: provider.id, model: rest.join('/') || null })
 }
 
 // What each permission mode means, provider by provider.
@@ -247,12 +249,14 @@ export const MODES = {
 }
 
 export function formatModel(selection) {
-  const p = PROVIDERS[selection.provider]
-  const model = selection.model || 'default'
-  if (selection.provider === 'opencode' && selection.model) {
-    return `${p.codename.toLowerCase()} · ${selection.model}`
+  const normalized = normalizeModelSelection(selection)
+  const p = PROVIDERS[normalized.provider]
+  const model = normalized.model || 'default'
+  if (normalized.provider === 'opencode' && normalized.model) {
+    return `${p.codename.toLowerCase()} · ${normalized.model}`
   }
-  return `${p.codename.toLowerCase()} · ${p.id}/${model}`
+  const effort = normalized.provider === 'codex' && normalized.reasoningEffort ? ` · ${normalized.reasoningEffort}` : ''
+  return `${p.codename.toLowerCase()} · ${p.id}/${model}${effort}`
 }
 
 // Per-provider output renderers: turn the raw CLI streams into a quiet,
@@ -753,8 +757,9 @@ function lineSplitter(onLine) {
 // renderer. Resolves with the exit code; Ctrl+C kills only the child.
 // FORCE_COLOR/CLICOLOR_FORCE keep the providers' own colors despite the pipe.
 export function runTurn({ selection, prompt, resume, cwd, mode = 'act', options = {} }, { onSpawn, onLine, onUsage } = {}) {
-  const provider = PROVIDERS[selection.provider]
-  const args = provider.args({ prompt, model: selection.model, resume, mode, options })
+  const normalized = normalizeModelSelection(selection)
+  const provider = PROVIDERS[normalized.provider]
+  const args = provider.args({ prompt, model: normalized.model, reasoningEffort: normalized.reasoningEffort, resume, mode, options })
   return new Promise((resolve) => {
     const env = { ...process.env, FORCE_COLOR: '1', CLICOLOR_FORCE: '1' }
     delete env.NO_COLOR
