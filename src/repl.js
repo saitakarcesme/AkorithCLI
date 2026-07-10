@@ -19,7 +19,7 @@ import { runDoctorCommand, runReviewCommand, runUpdateCommand, buildReviewPatch 
 import { COMMAND_CATALOG, filterCatalog, fuzzyMatch } from './palette.js'
 import { filePatch, parseDiff } from './review.js'
 import { InputEditor, ScreenInputAdapter } from './input-editor.js'
-import { terminalMouseEvent, TerminalScreen } from './terminal-screen.js'
+import { decodeTerminalMouseInput, TerminalScreen } from './terminal-screen.js'
 import { loadCodexModels, modelSelectionSpec, normalizeModelSelection } from './models.js'
 
 const STATIC_MODEL_CHOICES = [
@@ -327,6 +327,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   let terminalScreen = null
   let gitHeader = readGitHeaderState(process.cwd())
   let chordUntil = 0
+  let pendingMouseSequence = ''
   let pasteNoticeTimer = null
 
   function resetStarted(next = {}) {
@@ -1989,7 +1990,13 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   if (process.stdin.isTTY) {
     readline.emitKeypressEvents(process.stdin, terminalScreen ? undefined : rl)
     process.stdin.on('keypress', (str, key = {}) => {
-      const mouse = terminalScreen ? terminalMouseEvent(key.sequence || str) : null
+      const eventSequence = String(key.sequence || str || '')
+      const decodedMouse = terminalScreen
+        ? decodeTerminalMouseInput(pendingMouseSequence, eventSequence)
+        : { buffer: '', event: null, captured: false }
+      pendingMouseSequence = decodedMouse.buffer
+      if (decodedMouse.captured && !decodedMouse.event) return
+      const mouse = decodedMouse.event
       if (mouse) {
         if (mouse.type === 'wheel') {
           const selectionDelta = mouse.direction === 'up' ? -1 : 1

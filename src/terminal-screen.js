@@ -38,6 +38,20 @@ export function terminalMouseEvent(sequence) {
   return { type: 'mouse', direction: null, column: Number(match[2]), row: Number(match[3]) }
 }
 
+export function decodeTerminalMouseInput(buffer = '', chunk = '') {
+  const sequence = String(chunk || '')
+  if (buffer) {
+    const combined = buffer + sequence
+    if (/[Mm]$/.test(combined)) {
+      return { buffer: '', event: terminalMouseEvent(combined), captured: true }
+    }
+    return { buffer: combined.length <= 40 ? combined : '', event: null, captured: true }
+  }
+  if (sequence === '\x1b[<') return { buffer: sequence, event: null, captured: true }
+  const event = terminalMouseEvent(sequence)
+  return { buffer: '', event, captured: Boolean(event) }
+}
+
 export function layoutTier(columns, rows) {
   const { width, height } = normalizeViewport(columns, rows)
   if (width < 64 || height < 18) return 'compact'

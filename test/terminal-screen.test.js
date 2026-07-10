@@ -6,6 +6,7 @@ import {
   compactComposerModel,
   composerLayout,
   contextUsageMeter,
+  decodeTerminalMouseInput,
   extractPlanTodos,
   fitScreenLine,
   headerLines,
@@ -172,6 +173,18 @@ test('parses SGR mouse wheel events without treating clicks as input', () => {
   assert.deepEqual(terminalMouseEvent('\x1b[<65;20;10M'), { type: 'wheel', direction: 'down', column: 20, row: 10 })
   assert.deepEqual(terminalMouseEvent('\x1b[<0;20;10M'), { type: 'mouse', direction: null, column: 20, row: 10 })
   assert.equal(terminalMouseEvent('ordinary input'), null)
+})
+
+test('reassembles mouse packets split by Node keypress events', () => {
+  let decoded = decodeTerminalMouseInput('', '\x1b[<')
+  assert.equal(decoded.captured, true)
+  for (const chunk of ['6', '4', ';', '2', '0', ';', '1', '0']) {
+    decoded = decodeTerminalMouseInput(decoded.buffer, chunk)
+    assert.equal(decoded.event, null)
+  }
+  decoded = decodeTerminalMouseInput(decoded.buffer, 'M')
+  assert.deepEqual(decoded.event, { type: 'wheel', direction: 'up', column: 20, row: 10 })
+  assert.equal(decoded.buffer, '')
 })
 
 test('context usage meter reports thresholds without exceeding its width', () => {

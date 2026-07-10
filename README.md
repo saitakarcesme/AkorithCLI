@@ -140,7 +140,7 @@ cell width. Non-TTY and `TERM=dumb` output keeps the plain script-friendly flow.
 - `Enter` sends; `Shift+Enter` or `Ctrl+J` inserts a newline.
 - `↑`/`↓` recall prompt history and restore the unfinished draft.
 - `Ctrl+P` opens the filterable command palette; `Alt+M` opens models where supported.
-- `PageUp`/`PageDown` scroll the transcript; `Ctrl+X`, then `G`, opens `/timeline`.
+- Mouse wheel or `PageUp`/`PageDown` scrolls the transcript; streaming output keeps the selected scroll position. `Ctrl+X`, then `G`, opens `/timeline`.
 - `Ctrl+T` cycles reasoning visibility; `Ctrl+C` cancels a turn or activates the exit guard.
 - `AKORITH_REDUCED_MOTION=1` disables animation, `AKORITH_MONO=1` disables brand color,
   and `AKORITH_NO_FULLSCREEN=1` selects the classic streaming fallback.
