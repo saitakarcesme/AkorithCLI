@@ -146,12 +146,18 @@ export function runDoctorCommand() {
   return checks.every((check) => check.ok || ['ollama', 'gh'].includes(check.name)) ? 0 : 1
 }
 
-export function runUpdateCommand({ local = false } = {}) {
+export function runUpdateCommand({ local = false, onOutput = null } = {}) {
   const globalRoot = run('npm', ['root', '-g']).stdout?.trim()
   const installed = globalRoot ? path.join(globalRoot, 'akorith') : ''
   const linkedHere = installed && fs.existsSync(installed) && fs.realpathSync(installed) === ROOT
   const args = local || linkedHere ? ['install', '-g', '.'] : ['install', '-g', 'akorith']
-  const result = spawnSync('npm', args, { cwd: ROOT, stdio: 'inherit' })
+  const result = onOutput
+    ? spawnSync('npm', args, { cwd: ROOT, encoding: 'utf8' })
+    : spawnSync('npm', args, { cwd: ROOT, stdio: 'inherit' })
+  if (onOutput) {
+    if (result.stdout) onOutput(result.stdout.trimEnd())
+    if (result.stderr) onOutput(result.stderr.trimEnd())
+  }
   return result.status ?? 1
 }
 
