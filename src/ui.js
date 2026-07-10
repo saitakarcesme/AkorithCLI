@@ -69,6 +69,7 @@ export function terminalCellWidth(character) {
   if (/^[\p{Mark}\u200d\ufe0e\ufe0f]$/u.test(value)) return 0
   const code = value.codePointAt(0)
   if (/\p{Extended_Pictographic}/u.test(value)) return 2
+  if (code >= 0x1f1e6 && code <= 0x1f1ff) return 2
   if (
     code >= 0x1100 && (
       code <= 0x115f || code === 0x2329 || code === 0x232a ||
