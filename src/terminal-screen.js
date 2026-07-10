@@ -68,7 +68,7 @@ export function headerLines({ width, height, model = 'default', mode = 'act', cw
   const identity = session ? `${brand} · ${fitText(session, 24, { middle: true })}` : brand
   return [
     joinSides(identity, `${dot} ${state}`, viewport.width),
-    joinSides(` ${location}`, `${fitText(model, 30, { middle: true })} · ${mode}`, viewport.width),
+    joinSides(` ${location}`, `│ ${fitText(model, 30, { middle: true })} · ${mode}`, viewport.width),
   ]
 }
 
