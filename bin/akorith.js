@@ -52,8 +52,8 @@ Common options:
 
 Model specs: <provider>[/<model>] with provider one of claude, codex, opencode, ollama.
 OpenCode exact ids also work as -m opencode-go/glm-5.2.
-Inside the workspace: Grok Build-style start screen, clean message flow, /model to switch,
-/options for run flags, /help for everything else.`)
+Inside the workspace: persistent responsive header, bottom-anchored composer, /model to switch,
+/timeline to browse output, /options for run flags, and /help for everything else.`)
 }
 
 function die(message) {
