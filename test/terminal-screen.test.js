@@ -2,13 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildFrame,
+  brandHeaderLines,
   composerLayout,
   contextUsageMeter,
+  extractPlanTodos,
   fitScreenLine,
   headerLines,
   layoutTier,
   normalizeViewport,
   overlayWindow,
+  sidebarLines,
   TerminalScreen,
 } from '../src/terminal-screen.js'
 import { visibleLength } from '../src/ui.js'
@@ -74,9 +77,9 @@ test('buildFrame reserves header, body, and bottom composer rows', () => {
 
   assert.equal(frame.lines.length, 30)
   assert.ok(frame.lines.every((line) => visibleLength(line) === 96))
-  assert.ok(frame.lines.some((line) => line.includes('AKORITH')))
+  assert.ok(frame.lines.some((line) => line.includes('█████')))
   assert.ok(frame.lines.some((line) => line.includes('typed inside the composer')))
-  assert.ok(frame.lines.some((line) => line.includes('Your agent workspace is ready')))
+  assert.ok(frame.lines.some((line) => line.includes('workspace is ready')))
   assert.ok(frame.cursorRow > frame.bodyHeight)
   assert.ok(frame.cursorRow <= 30)
 })
@@ -139,6 +142,7 @@ test('terminal timeline can jump, search, and return to the tail', () => {
   assert.ok(screen.timelineLines().some((line) => line.includes('beta target')))
   screen.stop()
   assert.ok(writes.some((value) => value.includes('\x1b[?1049h')))
+  assert.ok(writes.some((value) => value.includes('\x1b[?6l\x1b[r')))
   assert.ok(writes.some((value) => value.includes('\x1b[?1049l')))
 })
 
@@ -148,4 +152,62 @@ test('context usage meter reports thresholds without exceeding its width', () =>
   assert.ok(contextUsageMeter(170000, '200k', 5).endsWith('%!'))
   assert.ok(contextUsageMeter(195000, '200k', 5).endsWith('%⚠'))
   assert.equal(contextUsageMeter(500, 'provider', 5), 'ctx provider')
+})
+
+test('large pixel logo remains in splash and conversation frames', () => {
+  const splash = buildFrame({ width: 104, height: 32 })
+  const conversation = buildFrame({ width: 104, height: 32, transcript: ['hello'] })
+  assert.equal(brandHeaderLines({ width: 104, height: 32 }).length, 6)
+  assert.ok(splash.lines.some((line) => line.includes('█████')))
+  assert.ok(conversation.lines.some((line) => line.includes('█████')))
+})
+
+test('short transcript begins directly below the persistent header', () => {
+  const frame = buildFrame({ width: 90, height: 30, transcript: ['first message', 'second message'] })
+  const first = frame.lines.findIndex((line) => line.includes('first message'))
+  const second = frame.lines.findIndex((line) => line.includes('second message'))
+  assert.ok(first > 0)
+  assert.equal(second, first + 1)
+  assert.ok(first < Math.floor(frame.lines.length / 2))
+})
+
+test('wide layout moves metadata and todos into a right sidebar', () => {
+  const todos = [
+    { text: 'Fix model switching', done: true },
+    { text: 'Add responsive sidebar', active: true },
+  ]
+  const wide = buildFrame({ width: 148, height: 40, model: 'codex/gpt-5.5 · high', todos })
+  const regular = buildFrame({ width: 120, height: 40, model: 'codex/gpt-5.5 · high', todos })
+  assert.equal(wide.sidebarVisible, true)
+  assert.equal(regular.sidebarVisible, false)
+  assert.ok(wide.lines.some((line) => line.includes('WORKSPACE')))
+  assert.ok(wide.lines.some((line) => line.includes('Fix model switching')))
+  assert.ok(!wide.lines.some((line) => line.includes('Enter send')))
+  assert.ok(!regular.lines.some((line) => line.includes('Enter send')))
+})
+
+test('sidebar rows always fit their assigned column', () => {
+  const lines = sidebarLines({
+    width: 34,
+    height: 20,
+    model: 'a/very-long-provider-model-name',
+    todos: [{ text: 'A very long todo that needs elision' }],
+  })
+  assert.equal(lines.length, 20)
+  assert.ok(lines.every((line) => visibleLength(line) === 34))
+})
+
+test('extracts checklist and named plan items for the sidebar', () => {
+  assert.deepEqual(extractPlanTodos([
+    'Plan:',
+    '1. Inspect provider models',
+    '2. Fix the responsive layout',
+    '- [x] Add tests',
+    '- [>] Capture screenshots',
+  ]), [
+    { text: 'Inspect provider models', done: false, active: false },
+    { text: 'Fix the responsive layout', done: false, active: false },
+    { text: 'Add tests', done: true, active: false },
+    { text: 'Capture screenshots', done: false, active: true },
+  ])
 })

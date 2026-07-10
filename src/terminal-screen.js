@@ -5,7 +5,6 @@ import {
   dim,
   faint,
   fitText,
-  gradient,
   green,
   padVisible,
   pixelLogoLines,
@@ -57,16 +56,15 @@ export function headerLines({ width, height, model = 'default', mode = 'act', cw
   const tier = layoutTier(viewport.width, viewport.height)
   const state = busy ? 'working' : 'ready'
   const dot = connected ? '●' : '○'
-  const brand = ' AKORITH'
   if (tier === 'compact') {
     return [
-      joinSides(`${brand} · ${fitText(model, Math.max(8, viewport.width - 24), { middle: true })}`, `${dot} ${state}`, viewport.width),
+      joinSides(` ${fitText(session || model, Math.max(8, viewport.width - 14), { middle: true })}`, `${dot} ${state}`, viewport.width),
     ]
   }
   const location = [fitText(cwd, Math.max(12, Math.floor(viewport.width * 0.52)), { middle: true }), branch && `${branch}${dirty ? '*' : ''}`]
     .filter(Boolean)
     .join(' · ')
-  const identity = session ? `${brand} · ${fitText(session, 24, { middle: true })}` : brand
+  const identity = ` ${fitText(session || 'new session', 32, { middle: true })}`
   return [
     joinSides(identity, `${dot} ${state}`, viewport.width),
     joinSides(` ${location}`, `│ ${fitText(model, 30, { middle: true })} · ${mode}`, viewport.width),
@@ -182,42 +180,17 @@ export function splashLines({ width, height, version = '', model = 'default', cw
   const tier = layoutTier(viewport.width, viewport.height)
   const lines = []
   if (tier === 'compact') {
-    lines.push(gradient(bold('AKORITH')))
-    lines.push(dim('Agent workspace'))
-    lines.push('')
+    lines.push(yellow(bold('Your workspace is ready.')))
     lines.push(`${violet('›')} ${text('Start typing to begin')}`)
-    lines.push(`${faint('/')} ${dim('help · model · sessions · review')}`)
+    lines.push(faint('/help · /model · /sessions'))
     return lines
   }
-  const cardWidth = Math.min(tier === 'wide' ? 92 : 72, viewport.width - 4)
-  const inner = cardWidth - 4
-  const row = (value = '') => faint('│ ') + ansiCell(value, inner) + faint(' │')
-  lines.push(faint('╭' + '─'.repeat(cardWidth - 2) + '╮'))
-  lines.push(row())
-  lines.push(row(`${gradient(bold('AKORITH'))} ${faint(version ? `v${version}` : '')}`))
-  lines.push(row(yellow(bold('Your agent workspace is ready.'))))
-  lines.push(row(dim('Claude, Codex, and OpenCode in one responsive terminal.')))
-  lines.push(row())
-  lines.push(row(`${cyan('↵')} ${text(bold('Send a prompt'))}       ${faint('Enter')}`))
-  lines.push(row(`${violet('⌘')} ${text(bold('Command palette'))}   ${faint('Ctrl+P')}`))
-  lines.push(row(`${green('●')} ${text(bold('Switch model'))}      ${faint('/model')}`))
-  lines.push(row(`${faint('◫')} ${text(bold('Resume session'))}    ${faint('/sessions')}`))
-  lines.push(row())
-  lines.push(row(`${faint('model')} ${dim(fitText(model, Math.max(12, inner - 16), { middle: true }))}`))
-  lines.push(row(`${faint('cwd  ')} ${dim(fitText(cwd, Math.max(12, inner - 16), { middle: true }))}`))
-  lines.push(row())
-  lines.push(faint('╰' + '─'.repeat(cardWidth - 2) + '╯'))
+  lines.push(yellow(bold('Your agent workspace is ready.')))
+  lines.push(dim('Claude, Codex, and OpenCode in one responsive terminal.'))
+  lines.push('')
+  lines.push(`${cyan('›')} ${text(bold('Start typing to begin'))}`)
+  lines.push(faint('/help · /model · /sessions · /review'))
   return lines
-}
-
-function centerBlock(lines, width, height) {
-  const top = Math.max(0, Math.floor((height - lines.length) / 2))
-  const out = Array(top).fill('')
-  for (const line of lines.slice(0, height)) {
-    const left = Math.max(0, Math.floor((width - visibleLength(line)) / 2))
-    out.push(' '.repeat(left) + line)
-  }
-  return out.slice(0, height)
 }
 
 function topBlock(lines, width, height, { center = true } = {}) {
@@ -303,6 +276,36 @@ export function overlayWindow(lines, height) {
   return [top, ...body.slice(start, start + capacity), bottom]
 }
 
+function buildBodyLines({
+  width,
+  height,
+  version,
+  model,
+  cwd,
+  transcript,
+  transcriptOffset,
+  overlay,
+  notice,
+  spinner,
+}) {
+  const safeHeight = Math.max(1, height)
+  const trailing = [notice, spinner].filter(Boolean)
+  const capacity = Math.max(0, safeHeight - trailing.length)
+  let content
+  if (Array.isArray(overlay)) {
+    content = overlayWindow(overlay, capacity).slice(0, capacity)
+  } else if (transcript.length) {
+    const offset = Math.max(0, Math.min(Number(transcriptOffset) || 0, Math.max(0, transcript.length - 1)))
+    const end = Math.max(0, transcript.length - offset)
+    content = transcript.slice(Math.max(0, end - capacity), end)
+  } else {
+    content = topBlock(splashLines({ width, height: safeHeight, version, model, cwd }), width, capacity).slice(0, capacity)
+  }
+  const rows = [...content, ...trailing].map((line) => fitScreenLine(line, width))
+  while (rows.length < safeHeight) rows.push(' '.repeat(width))
+  return rows.slice(0, safeHeight)
+}
+
 export function buildFrame({
   width,
   height,
@@ -327,41 +330,84 @@ export function buildFrame({
   overlay = null,
   notice = '',
   spinner = '',
+  todos = [],
 } = {}) {
   const viewport = normalizeViewport(width, height)
+  const brand = brandHeaderLines(viewport)
   const header = headerLines({ ...viewport, model, mode, cwd, branch, dirty, session, busy, connected })
-  const composer = composerLayout({ ...viewport, input, cursor, model, mode, usage, usageTotal, context, queue, busy, label: composerLabel })
   const separator = fitScreenLine(faint('─'.repeat(viewport.width)), viewport.width)
-  const fixedRows = header.length + 1 + composer.lines.length
-  const bodyHeight = Math.max(1, viewport.height - fixedRows)
-  let bodySource
-  if (Array.isArray(overlay)) {
-    bodySource = centerBlock(overlayWindow(overlay, bodyHeight), viewport.width, bodyHeight)
-  } else if (transcript.length) {
-    const capacity = Math.max(1, bodyHeight - (notice ? 1 : 0) - (spinner ? 1 : 0))
-    const offset = Math.max(0, Math.min(Number(transcriptOffset) || 0, Math.max(0, transcript.length - 1)))
-    const end = Math.max(0, transcript.length - offset)
-    bodySource = transcript.slice(Math.max(0, end - capacity), end)
-  } else {
-    bodySource = centerBlock(splashLines({ ...viewport, version, model, cwd }), viewport.width, bodyHeight)
-  }
-  if (notice) bodySource.push(notice)
-  if (spinner) bodySource.push(spinner)
-  const body = bodySource.slice(-bodyHeight).map((line) => fitScreenLine(line, viewport.width))
-  while (body.length < bodyHeight) body.unshift(' '.repeat(viewport.width))
-  const composerStart = header.length + 1 + bodyHeight
-  const lines = [
+  const top = [
+    ...brand,
     ...header.map((line, index) => fitScreenLine(index === 0 ? violet(bold(line)) : dim(line), viewport.width)),
     separator,
-    ...body,
-    ...composer.lines.map((line, index) => fitScreenLine(index <= composer.lines.length - 3 ? faint(line) : dim(line), viewport.width)),
   ]
+  const sidebarVisible = viewport.width >= 144 && viewport.height >= 28
+  const sidebarWidth = sidebarVisible ? Math.max(30, Math.min(38, Math.floor(viewport.width * 0.24))) : 0
+  const mainWidth = sidebarVisible ? viewport.width - sidebarWidth - 1 : viewport.width
+  const composer = composerLayout({
+    width: mainWidth,
+    height: viewport.height,
+    input,
+    cursor,
+    model,
+    mode,
+    usage,
+    usageTotal,
+    context,
+    queue,
+    busy,
+    label: composerLabel,
+    showStatus: !sidebarVisible,
+  })
+  const paneHeight = Math.max(1, viewport.height - top.length)
+  const bodyHeight = Math.max(1, paneHeight - composer.lines.length)
+  const body = buildBodyLines({
+    width: mainWidth,
+    height: bodyHeight,
+    version,
+    model,
+    cwd,
+    transcript,
+    transcriptOffset,
+    overlay,
+    notice,
+    spinner,
+  })
+  const composerRows = composer.lines.map((line, index) => fitScreenLine(index < composer.lines.length - (sidebarVisible ? 0 : 1) ? faint(line) : dim(line), mainWidth))
+  const mainPane = [...body, ...composerRows]
+  while (mainPane.length < paneHeight) mainPane.push(' '.repeat(mainWidth))
+  let pane
+  if (sidebarVisible) {
+    const sidebar = sidebarLines({
+      width: sidebarWidth,
+      height: paneHeight,
+      model,
+      mode,
+      cwd,
+      branch,
+      dirty,
+      session,
+      busy,
+      connected,
+      usage,
+      usageTotal,
+      context,
+      queue,
+      todos,
+    })
+    pane = mainPane.map((line, index) => ansiCell(line, mainWidth) + faint('│') + ansiCell(sidebar[index], sidebarWidth))
+  } else {
+    pane = mainPane
+  }
+  const composerStart = top.length + bodyHeight
+  const lines = [...top, ...pane]
   return {
     lines: lines.slice(0, viewport.height),
     cursorRow: Math.min(viewport.height, composerStart + composer.cursorRow + 1),
     cursorColumn: Math.min(viewport.width, composer.cursorColumn + 1),
     tier: composer.tier,
     bodyHeight,
+    sidebarVisible,
   }
 }
 
@@ -369,6 +415,44 @@ let activeScreen = null
 
 export function getActiveTerminalScreen() {
   return activeScreen
+}
+
+export function extractPlanTodos(lines = []) {
+  const todos = []
+  let planMode = false
+  const upsert = (textValue, state = {}) => {
+    const clean = stripAnsi(textValue).replace(/\s+/g, ' ').trim()
+    if (!clean) return
+    const key = clean.toLowerCase()
+    const existing = todos.find((todo) => todo.text.toLowerCase() === key)
+    if (existing) Object.assign(existing, state)
+    else todos.push({ text: clean, done: false, active: false, ...state })
+  }
+  for (const raw of lines) {
+    const plain = stripAnsi(raw).trim()
+    if (/^(?:#{1,4}\s*)?(?:implementation\s+)?(?:plan|todo|tasks|yapılacaklar)\s*:?[\s]*$/i.test(plain)) {
+      planMode = true
+      continue
+    }
+    const checkbox = plain.match(/^(?:[-*•]\s*)?\[([ xX>])\]\s+(.+)$/)
+    if (checkbox) {
+      upsert(checkbox[2], { done: /x/i.test(checkbox[1]), active: checkbox[1] === '>' })
+      continue
+    }
+    const symbol = plain.match(/^([☐☑◐])\s+(.+)$/)
+    if (symbol) {
+      upsert(symbol[2], { done: symbol[1] === '☑', active: symbol[1] === '◐' })
+      continue
+    }
+    if (!planMode) continue
+    const item = plain.match(/^(?:\d+[.)]|[-*•])\s+(.+)$/)
+    if (item) {
+      upsert(item[1])
+      continue
+    }
+    if (plain && todos.length) planMode = false
+  }
+  return todos.slice(-12)
 }
 
 export class TerminalScreen {
@@ -384,6 +468,7 @@ export class TerminalScreen {
     this.renderTimer = null
     this.maxTranscriptRows = 4000
     this.transcriptOffset = 0
+    this.todos = []
   }
 
   dimensions() {
@@ -394,7 +479,7 @@ export class TerminalScreen {
     if (this.started || !this.output.isTTY) return false
     this.started = true
     activeScreen = this
-    this.output.write('\x1b[?1049h\x1b[?25l')
+    this.output.write('\x1b[?1049h\x1b[?6l\x1b[r\x1b[2J\x1b[H\x1b[?25l')
     this.renderNow()
     return true
   }
@@ -406,7 +491,7 @@ export class TerminalScreen {
     if (this.renderTimer) clearTimeout(this.renderTimer)
     this.renderTimer = null
     if (activeScreen === this) activeScreen = null
-    this.output.write('\x1b[?25h\x1b[0m\x1b[?1049l')
+    this.output.write('\x1b[?6l\x1b[r\x1b[?25h\x1b[0m\x1b[?1049l')
   }
 
   append(...values) {
@@ -415,6 +500,7 @@ export class TerminalScreen {
     if (this.transcript.length > this.maxTranscriptRows) {
       this.transcript.splice(0, this.transcript.length - this.maxTranscriptRows)
     }
+    this.todos = extractPlanTodos(this.transcript)
     this.transcriptOffset = 0
     this.scheduleRender()
   }
@@ -423,6 +509,7 @@ export class TerminalScreen {
     this.transcript = []
     this.transcriptOffset = 0
     this.notice = ''
+    this.todos = []
     this.scheduleRender()
   }
 
@@ -438,6 +525,16 @@ export class TerminalScreen {
 
   setSpinner(value = '') {
     this.spinner = String(value)
+    this.scheduleRender()
+  }
+
+  setTodos(todos = []) {
+    this.todos = todos.map((todo) => typeof todo === 'string' ? { text: todo, done: false, active: false } : { ...todo })
+    this.scheduleRender()
+  }
+
+  clearTodos() {
+    this.todos = []
     this.scheduleRender()
   }
 
@@ -500,8 +597,8 @@ export class TerminalScreen {
 
   renderNow() {
     if (!this.started) return
-    const frame = buildFrame({ ...this.dimensions(), ...this.state(), transcript: this.transcript, transcriptOffset: this.transcriptOffset, overlay: this.overlay, notice: this.notice, spinner: this.spinner })
+    const frame = buildFrame({ ...this.dimensions(), ...this.state(), transcript: this.transcript, transcriptOffset: this.transcriptOffset, overlay: this.overlay, notice: this.notice, spinner: this.spinner, todos: this.todos })
     const body = frame.lines.map((line) => `${line}\x1b[K`).join('\n')
-    this.output.write(`\x1b[?25l\x1b[H${body}\x1b[J\x1b[${frame.cursorRow};${frame.cursorColumn}H\x1b[?25h`)
+    this.output.write(`\x1b[?25l\x1b[?6l\x1b[r\x1b[H${body}\x1b[J\x1b[${frame.cursorRow};${frame.cursorColumn}H\x1b[?25h`)
   }
 }
