@@ -397,7 +397,17 @@ function inputStatusLine({ width, status, label }) {
 }
 
 function akorithWordmarkFor(width) {
-  if (width >= 58) return WORDMARK.map((line, index) => paintRamp(line, index * 0.045, 0.55))
+  return pixelLogoLines(width)
+}
+
+export function pixelLogoLines(width = terminalColumns(), maxRows = 6) {
+  const available = Math.max(1, Number(width) || 80)
+  if (available >= 58 && maxRows >= 6) {
+    return WORDMARK.map((line, index) => paintRamp(line, index * 0.045, 0.55))
+  }
+  if (available >= 32 && maxRows >= 3) {
+    return COMPACT_WORDMARK.map((line, index) => paintRamp(line, index * 0.08, 0.55))
+  }
   return [gradient(bold('AKORITH'))]
 }
 
@@ -498,6 +508,12 @@ const WORDMARK = [
   '██╔══██║██╔═██╗ ██║   ██║██╔══██╗██║   ██║   ██╔══██║',
   '██║  ██║██║  ██╗╚██████╔╝██║  ██║██║   ██║   ██║  ██║',
   '╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝',
+]
+
+const COMPACT_WORDMARK = [
+  '▄▀▄ █▄▀ ▄▀▄ █▀▄ ▀█▀ ▀█▀ █ █',
+  '█▀█ █ █ █ █ █▀▄  █   █  █▀█',
+  '▀ ▀ ▀ ▀ ▀▄▀ ▀ ▀ ▀█▀  ▀  ▀ ▀',
 ]
 
 function wordmarkFrame(offset) {
