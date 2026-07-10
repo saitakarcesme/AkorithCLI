@@ -417,6 +417,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         usageTotal: usageTotals.total,
         context: contextWindowFor(selection),
         queue: queue.length,
+        composerLabel: rl?.questionCallback ? fitText(stripAnsi(rl.getPrompt()), 28) : 'Message',
       }),
     })
     rl = new ScreenInputAdapter({ editor, render: () => terminalScreen?.scheduleRender() })
