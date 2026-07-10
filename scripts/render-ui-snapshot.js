@@ -30,6 +30,27 @@ const common = {
 
 const state = stateArg === 'typing'
   ? { input: 'Responsive composer keeps this text inside every border 🙂', cursor: 61 }
+  : stateArg === 'busy'
+    ? {
+        busy: true,
+        transcript: [
+          '  ✓ succeeded in 0ms',
+          '  › shell  npm --version',
+          '  ✓ succeeded in 227ms',
+          '    Implementation plan:',
+          '    1. Keep every frame row anchored to its absolute terminal coordinate.',
+          '    2. Preserve scrollback while provider output continues streaming.',
+          '    3. Keep the wide sidebar divider continuous through the composer.',
+          '  › shell  npm test',
+          '  ✓ running responsive terminal checks',
+        ],
+        spinner: '    Akoriting···   olympus · 12s · running tests',
+        todos: [
+          { text: 'Anchor every frame row', done: true },
+          { text: 'Preserve streaming scrollback', done: true },
+          { text: 'Inspect divider continuity', active: true },
+        ],
+      }
   : stateArg === 'conversation'
     ? {
         transcript: [
