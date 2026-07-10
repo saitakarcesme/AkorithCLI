@@ -8,6 +8,7 @@ import {
   gradient,
   green,
   padVisible,
+  pixelLogoLines,
   sliceVisible,
   splitGraphemes,
   stripAnsi,
@@ -217,6 +218,75 @@ function centerBlock(lines, width, height) {
     out.push(' '.repeat(left) + line)
   }
   return out.slice(0, height)
+}
+
+function topBlock(lines, width, height, { center = true } = {}) {
+  const out = []
+  for (const line of lines.slice(0, height)) {
+    const left = center ? Math.max(0, Math.floor((width - visibleLength(line)) / 2)) : 0
+    out.push(' '.repeat(left) + line)
+  }
+  while (out.length < height) out.push('')
+  return out
+}
+
+export function brandHeaderLines({ width, height } = {}) {
+  const viewport = normalizeViewport(width, height)
+  const maxRows = viewport.height < 12 ? 1 : viewport.height < 24 ? 3 : 6
+  return pixelLogoLines(viewport.width, maxRows).map((line) => {
+    const left = Math.max(0, Math.floor((viewport.width - visibleLength(line)) / 2))
+    return ansiCell(' '.repeat(left) + line, viewport.width)
+  })
+}
+
+export function sidebarLines({
+  width,
+  height,
+  model = 'default',
+  mode = 'act',
+  cwd = '~',
+  branch = '',
+  dirty = false,
+  session = 'new session',
+  busy = false,
+  connected = true,
+  usage = '0 tokens',
+  usageTotal = 0,
+  context = 'provider',
+  queue = 0,
+  todos = [],
+} = {}) {
+  const safeWidth = Math.max(24, Number(width) || 32)
+  const safeHeight = Math.max(1, Number(height) || 20)
+  const inner = safeWidth - 2
+  const row = (value = '') => ansiCell(` ${value}`, safeWidth)
+  const section = (label) => ansiCell(` ${label} ${'─'.repeat(Math.max(0, inner - visibleLength(label) - 1))}`, safeWidth)
+  const state = busy ? yellow('● working') : connected ? green('● ready') : faint('○ offline')
+  const rows = [
+    section('WORKSPACE'),
+    row(state),
+    row(faint('model')),
+    row(text(fitText(model, inner - 1, { middle: true }))),
+    row(`${faint('mode')} ${text(mode)}${queue ? `  ${yellow(`queued ${queue}`)}` : ''}`),
+    row(faint(contextUsageMeter(usageTotal, context, 6))),
+    row(`${faint('tokens')} ${text(usage)}`),
+    row(),
+    section('SESSION'),
+    row(text(fitText(session, inner - 1, { middle: true }))),
+    row(faint(fitText(cwd, inner - 1, { middle: true }))),
+  ]
+  if (branch) rows.push(row(violet(fitText(`${branch}${dirty ? '*' : ''}`, inner - 1, { middle: true }))))
+  rows.push(row(), section(`TODO ${todos.length ? `${todos.filter((todo) => todo.done).length}/${todos.length}` : ''}`.trim()))
+  if (!todos.length) {
+    rows.push(row(faint('No active plan')))
+  } else {
+    for (const todo of todos.slice(0, Math.max(1, safeHeight - rows.length - 1))) {
+      const mark = todo.done ? green('✓') : todo.active ? yellow('●') : faint('○')
+      rows.push(row(`${mark} ${fitText(todo.text, Math.max(4, inner - 3))}`))
+    }
+  }
+  while (rows.length < safeHeight) rows.push(row())
+  return rows.slice(0, safeHeight)
 }
 
 export function overlayWindow(lines, height) {
