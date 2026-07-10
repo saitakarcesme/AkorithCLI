@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { buildFrame } from '../src/terminal-screen.js'
+import { brandHeaderLines, buildFrame } from '../src/terminal-screen.js'
 import { stripAnsi } from '../src/ui.js'
 
 const [outputArg = 'ui-test-screenshots/final-ui.svg', widthArg = '120', heightArg = '36', stateArg = 'splash'] = process.argv.slice(2)
@@ -41,25 +41,49 @@ const state = stateArg === 'typing'
           '    The composer stays pinned after output, resize, and session changes.',
           '    Turn completed in 4s.',
         ],
+        todos: [
+          { text: 'Normalize responsive layout', done: true },
+          { text: 'Verify model switching', done: true },
+          { text: 'Inspect final screenshots', active: true },
+        ],
       }
     : {}
 
 const frame = buildFrame({ ...common, ...state })
+const brandRows = brandHeaderLines({ width, height }).length
 const escapeXml = (value) => stripAnsi(value)
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')
 
-const rows = frame.lines.map((line, index) => {
+const textElement = (value, baseX, y, color) => {
+  const leading = value.match(/^ */)?.[0].length || 0
+  const content = value.slice(leading).replace(/\s+$/, '')
+  if (!content) return ''
+  return `<text x="${baseX + leading * cellWidth}" y="${y}" fill="${color}" xml:space="preserve">${escapeXml(content)}</text>`
+}
+
+const plainLines = frame.lines.map((line) => stripAnsi(line))
+const sidebarColumn = frame.sidebarVisible
+  ? plainLines.find((line) => line.includes('│ WORKSPACE'))?.indexOf('│ WORKSPACE') ?? -1
+  : -1
+const brandColors = ['#c4b5fd', '#a78bfa', '#818cf8', '#38bdf8', '#22d3ee', '#34d399']
+const rows = plainLines.map((line, index) => {
   const y = chrome + padding + (index + 0.8) * cellHeight
-  const color = index === 0 ? '#c4b5fd' : index < 3 ? '#a1a1aa' : '#d4d4d8'
-  return `<text x="${padding}" y="${y}" fill="${color}" xml:space="preserve">${escapeXml(line)}</text>`
+  const color = index < brandRows ? brandColors[index % brandColors.length] : index < brandRows + 2 ? '#c4b5fd' : '#d4d4d8'
+  if (sidebarColumn > 0) {
+    const main = line.slice(0, sidebarColumn)
+    const sidebar = line.slice(sidebarColumn)
+    const sidebarX = padding + sidebarColumn * cellWidth
+    return textElement(main, padding, y, color) + textElement(sidebar, sidebarX, y, '#a1a1aa')
+  }
+  return textElement(line, padding, y, color)
 }).join('\n')
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">
-  <rect width="100%" height="100%" rx="18" fill="#171719"/>
-  <rect x="0" y="0" width="100%" height="${chrome}" rx="18" fill="#252529"/>
-  <rect x="0" y="${chrome - 18}" width="100%" height="18" fill="#252529"/>
+  <rect width="${svgWidth}" height="${svgHeight}" rx="18" fill="#171719"/>
+  <rect x="0" y="0" width="${svgWidth}" height="${chrome}" rx="18" fill="#252529"/>
+  <rect x="0" y="${chrome - 18}" width="${svgWidth}" height="18" fill="#252529"/>
   <circle cx="24" cy="21" r="6" fill="#ff5f57"/>
   <circle cx="44" cy="21" r="6" fill="#febc2e"/>
   <circle cx="64" cy="21" r="6" fill="#28c840"/>
