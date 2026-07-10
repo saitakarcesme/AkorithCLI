@@ -13,9 +13,10 @@ import {
   normalizeViewport,
   overlayWindow,
   sidebarLines,
+  terminalMouseEvent,
   TerminalScreen,
 } from '../src/terminal-screen.js'
-import { visibleLength } from '../src/ui.js'
+import { stripAnsi, visibleLength } from '../src/ui.js'
 
 test('normalizes unusably small terminal dimensions', () => {
   assert.deepEqual(normalizeViewport(10, 2), { width: 20, height: 8 })
@@ -148,8 +149,29 @@ test('terminal timeline can jump, search, and return to the tail', () => {
   assert.ok(screen.timelineLines().some((line) => line.includes('beta target')))
   screen.stop()
   assert.ok(writes.some((value) => value.includes('\x1b[?1049h')))
+  assert.ok(writes.some((value) => value.includes('\x1b[?7l\x1b[?1000h\x1b[?1006h')))
   assert.ok(writes.some((value) => value.includes('\x1b[?6l\x1b[r')))
+  assert.ok(writes.some((value) => value.includes('\x1b[1;1H')))
+  assert.ok(writes.some((value) => value.includes('\x1b[?1006l\x1b[?1000l\x1b[?7h')))
   assert.ok(writes.some((value) => value.includes('\x1b[?1049l')))
+})
+
+test('scrollback remains pinned while new provider output arrives', () => {
+  const screen = new TerminalScreen({ output: { isTTY: false } })
+  screen.append(Array.from({ length: 20 }, (_, index) => `line ${index}`).join('\n'))
+  screen.scroll(8)
+  screen.append('new line one\nnew line two')
+  assert.equal(screen.transcriptOffset, 10)
+  assert.ok(screen.notice.includes('10 rows'))
+  screen.scroll(-999)
+  assert.equal(screen.transcriptOffset, 0)
+})
+
+test('parses SGR mouse wheel events without treating clicks as input', () => {
+  assert.deepEqual(terminalMouseEvent('\x1b[<64;20;10M'), { type: 'wheel', direction: 'up', column: 20, row: 10 })
+  assert.deepEqual(terminalMouseEvent('\x1b[<65;20;10M'), { type: 'wheel', direction: 'down', column: 20, row: 10 })
+  assert.deepEqual(terminalMouseEvent('\x1b[<0;20;10M'), { type: 'mouse', direction: null, column: 20, row: 10 })
+  assert.equal(terminalMouseEvent('ordinary input'), null)
 })
 
 test('context usage meter reports thresholds without exceeding its width', () => {
@@ -190,6 +212,31 @@ test('wide layout moves metadata and todos into a right sidebar', () => {
   assert.ok(wide.lines.some((line) => line.includes('Fix model switching')))
   assert.ok(!wide.lines.some((line) => line.includes('Enter send')))
   assert.ok(!regular.lines.some((line) => line.includes('Enter send')))
+})
+
+test('wide sidebar divider occupies the same column on every pane row', () => {
+  const frame = buildFrame({
+    width: 159,
+    height: 46,
+    transcript: Array.from({ length: 80 }, (_, index) => `streamed output ${index}`),
+    spinner: '    Akoriting · running command',
+  })
+  const topRows = brandHeaderLines({ width: 159, height: 46 }).length + headerLines({ width: 159, height: 46 }).length + 1
+  const dividerColumn = 159 - 38 - 1
+  assert.ok(frame.lines.slice(topRows).every((line) => stripAnsi(line)[dividerColumn] === '│'))
+})
+
+test('full-screen paint addresses every row absolutely from the first row', () => {
+  const writes = []
+  const screen = new TerminalScreen({
+    output: { isTTY: true, columns: 159, rows: 46, write: (value) => writes.push(value) },
+  })
+  screen.start()
+  const paint = writes.find((value) => value.includes('\x1b[1;1H'))
+  assert.ok(paint)
+  assert.ok(paint.includes('█████'))
+  assert.ok(!paint.includes('\n'))
+  screen.stop()
 })
 
 test('sidebar rows always fit their assigned column', () => {

@@ -27,6 +27,17 @@ export function normalizeViewport(columns, rows) {
   return { width, height }
 }
 
+export function terminalMouseEvent(sequence) {
+  const match = String(sequence || '').match(/\x1b\[<(\d+);(\d+);(\d+)([Mm])$/)
+  if (!match) return null
+  const button = Number(match[1])
+  if (button >= 64 && button < 80) {
+    const direction = (button & 3) === 0 ? 'up' : (button & 3) === 1 ? 'down' : null
+    return { type: direction ? 'wheel' : 'mouse', direction, column: Number(match[2]), row: Number(match[3]) }
+  }
+  return { type: 'mouse', direction: null, column: Number(match[2]), row: Number(match[3]) }
+}
+
 export function layoutTier(columns, rows) {
   const { width, height } = normalizeViewport(columns, rows)
   if (width < 64 || height < 18) return 'compact'
@@ -402,7 +413,7 @@ export function buildFrame({
       queue,
       todos,
     })
-    pane = mainPane.map((line, index) => ansiCell(line, mainWidth) + faint('│') + ansiCell(sidebar[index], sidebarWidth))
+    pane = mainPane.map((line, index) => ansiCell(line, mainWidth) + dim('│') + ansiCell(sidebar[index], sidebarWidth))
   } else {
     pane = mainPane
   }
@@ -490,7 +501,7 @@ export class TerminalScreen {
     if (this.started || !this.output.isTTY) return false
     this.started = true
     activeScreen = this
-    this.output.write('\x1b[?1049h\x1b[?6l\x1b[r\x1b[2J\x1b[H\x1b[?25l')
+    this.output.write('\x1b[?1049h\x1b[?6l\x1b[?7l\x1b[?1000h\x1b[?1006h\x1b[r\x1b[2J\x1b[H\x1b[?25l')
     this.renderNow()
     return true
   }
@@ -502,17 +513,22 @@ export class TerminalScreen {
     if (this.renderTimer) clearTimeout(this.renderTimer)
     this.renderTimer = null
     if (activeScreen === this) activeScreen = null
-    this.output.write('\x1b[?6l\x1b[r\x1b[?25h\x1b[0m\x1b[?1049l')
+    this.output.write('\x1b[?1006l\x1b[?1000l\x1b[?7h\x1b[?6l\x1b[r\x1b[?25h\x1b[0m\x1b[?1049l')
   }
 
   append(...values) {
     const value = values.length > 1 ? format(...values) : String(values[0] ?? '')
-    this.transcript.push(...value.replace(/\r/g, '').split('\n'))
+    const added = value.replace(/\r/g, '').split('\n')
+    const pinnedOffset = this.transcriptOffset > 0 ? this.transcriptOffset + added.length : 0
+    this.transcript.push(...added)
     if (this.transcript.length > this.maxTranscriptRows) {
       this.transcript.splice(0, this.transcript.length - this.maxTranscriptRows)
     }
     this.todos = extractPlanTodos(this.transcript)
-    this.transcriptOffset = 0
+    this.transcriptOffset = Math.min(Math.max(0, this.transcript.length - 1), pinnedOffset)
+    if (this.transcriptOffset) {
+      this.notice = `scrollback · ${this.transcriptOffset} rows from latest · wheel down / PageDown returns`
+    }
     this.scheduleRender()
   }
 
@@ -551,8 +567,10 @@ export class TerminalScreen {
 
   scroll(delta) {
     const amount = Number(delta) || 0
+    if (!amount) return
+    this.overlay = null
     this.transcriptOffset = Math.max(0, Math.min(this.transcript.length - 1, this.transcriptOffset + amount))
-    this.notice = this.transcriptOffset ? `scrollback · ${this.transcriptOffset} rows from latest · PageDown returns` : ''
+    this.notice = this.transcriptOffset ? `scrollback · ${this.transcriptOffset} rows from latest · wheel down / PageDown returns` : ''
     this.scheduleRender()
   }
 
@@ -609,7 +627,7 @@ export class TerminalScreen {
   renderNow() {
     if (!this.started) return
     const frame = buildFrame({ ...this.dimensions(), ...this.state(), transcript: this.transcript, transcriptOffset: this.transcriptOffset, overlay: this.overlay, notice: this.notice, spinner: this.spinner, todos: this.todos })
-    const body = frame.lines.map((line) => `${line}\x1b[K`).join('\n')
-    this.output.write(`\x1b[?25l\x1b[?6l\x1b[r\x1b[H${body}\x1b[J\x1b[${frame.cursorRow};${frame.cursorColumn}H\x1b[?25h`)
+    const body = frame.lines.map((line, index) => `\x1b[${index + 1};1H${line}\x1b[K`).join('')
+    this.output.write(`\x1b[?25l\x1b[?6l\x1b[?7l\x1b[r${body}\x1b[${frame.cursorRow};${frame.cursorColumn}H\x1b[?25h`)
   }
 }
