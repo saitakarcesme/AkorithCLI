@@ -196,7 +196,7 @@ function choiceAliases(choice) {
   return [choice.label, choice.spec, choice.visibleSpec, ...(choice.aliases || [])].filter(Boolean)
 }
 
-function resolveModelSpec(input, choices = []) {
+export function resolveModelSpec(input, choices = []) {
   const raw = input.trim()
   if (!raw) return null
   const normalized = normalizeModelAlias(raw)
@@ -255,6 +255,12 @@ function readGitHeaderState(cwd) {
   }
 }
 
+export function shouldUseFullScreen({ env = process.env, input = process.stdin, output = process.stdout } = {}) {
+  return env.AKORITH_FULLSCREEN === '1' &&
+    env.AKORITH_NO_FULLSCREEN !== '1' &&
+    Boolean(input.isTTY) && Boolean(output.isTTY) && env.TERM !== 'dumb'
+}
+
 export async function startRepl({ version, initialModel, initialOptions = {}, initialSessionId = null } = {}) {
   const config = loadConfig()
   const available = detectProviders()
@@ -266,7 +272,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   let selection = null
   for (const spec of [initialModel, config.model, 'claude', 'codex', 'opencode']) {
     if (!spec) continue
-    const parsed = normalizeModelSelection(typeof spec === 'string' ? parseModelSpec(spec) : spec)
+    const parsed = normalizeModelSelection(typeof spec === 'string' ? resolveModelSpec(spec) : spec)
     if (parsed && available[parsed.provider]) {
       selection = parsed
       break
@@ -423,7 +429,11 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     error: console.error.bind(console),
     clear: console.clear.bind(console),
   }
-  const useFullScreen = process.stdin.isTTY && process.stdout.isTTY && process.env.TERM !== 'dumb' && process.env.AKORITH_NO_FULLSCREEN !== '1'
+  // The normal terminal buffer is the primary UI. It gives long model turns,
+  // tool output, and completed prompts native, smooth scrollback instead of
+  // trapping them in an alternate-screen viewport. The old dashboard remains
+  // available as an explicit opt-in for people who prefer a fixed composer.
+  const useFullScreen = shouldUseFullScreen()
   if (useFullScreen) {
     const editor = new InputEditor({ complete: completeEditor })
     terminalScreen = new TerminalScreen({
@@ -623,7 +633,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     for (const line of userMessageLines({ prompt: prompt || title || '', width, timeLabel: clockLabel() })) {
       console.log(line)
     }
-    const label = title === 'Review' ? 'Review' : 'Thought'
+    const label = title === 'Review' ? 'Review' : title || (mode === 'act' ? 'Build' : 'Plan')
     console.log()
     console.log(faint('  ◆ ') + bold(label) + faint(' · ') + dim(fitText(subtitle || formatModel(selection), Math.max(18, width - 14), { middle: true })))
     console.log()
@@ -1344,7 +1354,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     reviewExpanded = expanded ? new Set(expanded) : new Set()
     reviewSelected = 0
     applyReviewFilter({ keepPath: selectedPath })
-    if (activeChild || busy || closing || awaitingModelPick || awaitingSessionPick || awaitingPalette) return
+    if (activeChild || closing || awaitingModelPick || awaitingSessionPick || awaitingPalette) return
     if (promptBoxActive) clearPromptBox()
     awaitingReview = true
     console.log()
@@ -2194,9 +2204,6 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       if (terminalScreen) {
         terminalScreen.setNotice('')
         terminalScreen.clear()
-      } else if (process.stdout.isTTY) {
-        readline.cursorTo(process.stdout, 0, 0)
-        readline.clearScreenDown(process.stdout)
       }
     } else if (promptBoxActive) {
       clearPromptBox({ afterSubmit: true })

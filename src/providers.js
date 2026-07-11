@@ -91,14 +91,21 @@ export const PROVIDERS = {
     codename: 'Gaia',
     bin: 'opencode',
     hint: 'model format provider/model (e.g. /model opencode/anthropic/claude-sonnet-4-5)',
-    args({ prompt, model, resume, mode, options = {} }) {
-      const args = ['run', prompt]
+    args({ prompt, model, resume, mode, cwd, options = {} }) {
+      const args = ['run']
       if (model) args.push('-m', model)
       if (resume) args.push('-c')
       if (options.sessionId) args.push('-s', options.sessionId)
+      // OpenCode can retain a project directory through its session/plugin
+      // state. Pin every run explicitly so Akorith's -C and /cd boundaries are
+      // honored even when the parent process was launched from another repo.
+      if (cwd) args.push('--dir', cwd)
+      args.push('--format', 'json')
+      if (options.thinking === 'show') args.push('--thinking')
       // OpenCode's built-in plan agent is its read-only mode
       if (mode === 'act') args.push('--auto')
       else args.push('--agent', 'plan')
+      args.push(prompt)
       return args
     },
   },
@@ -296,6 +303,9 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
     let spokeFromLog = false
     let lastBlank = true
     let thinkingOpen = false
+    let thinkingLines = []
+    let execCommand = ''
+    let execStatus = null
     let tokenReport = null
     const diagnostics = []
     const flow = createFlowLinePrinter(print)
@@ -347,22 +357,39 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
         }
         return
       }
-      // show: stream reasoning inline, dimmed, indented.
+      // Show mode collects provider-supplied reasoning until the phase closes.
+      // Printing one bounded block avoids dozens of fragmented one-line rows.
       if (!thinkingOpen) {
         thinkingOpen = true
-        if (!lastBlank) print('')
-        print(violet('  ▸ ') + dim('thinking'))
-        lastBlank = false
+        thinkingLines = []
       }
-      print(faint('    ' + plain))
-      lastBlank = false
+      thinkingLines.push(plain)
     }
     const closeThinking = () => {
       if (thinkingOpen) {
         thinkingOpen = false
-        if (thinkingMode === 'show') print('')
-        lastBlank = true
+        if (thinkingMode === 'show' && thinkingLines.length) {
+          if (!lastBlank) print('')
+          for (const row of formatReasoningBlock(thinkingLines)) print(row)
+          lastBlank = false
+        }
+        thinkingLines = []
       }
+    }
+    const closeExec = () => {
+      if (!execCommand && !execStatus) return
+      print(toolCardHeader({
+        name: 'exec',
+        status: execStatus === 'error' ? 'error' : 'completed',
+        subtitle: compactCommand(execCommand || 'command'),
+      }))
+      execCommand = ''
+      execStatus = null
+      lastBlank = false
+    }
+    const closePhase = () => {
+      closeThinking()
+      closeExec()
     }
     return {
       stdoutLine(line) {
@@ -376,12 +403,12 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
           if (/^-{4,}$/.test(plain.trim())) dashes++
           return
         }
-        if (plain === 'user') { closeThinking(); block = 'suppress'; setStatus('reading prompt'); return }
-        if (plain === 'codex') { closeThinking(); block = 'say'; inDiff = false; setStatus('writing response'); return }
-        if (plain === 'thinking') { closeThinking(); block = 'think'; setStatus('thinking through the request'); return }
-        if (plain === 'exec') { closeThinking(); block = 'exec'; execHeader = true; setStatus('running command'); return }
-        if (plain === 'apply patch') { closeThinking(); block = 'patch'; patchOk = null; setStatus('editing files'); return }
-        if (plain === 'tokens used') { closeThinking(); block = 'tokens'; setStatus('wrapping up'); return }
+        if (plain === 'user') { closePhase(); block = 'suppress'; setStatus('reading prompt'); return }
+        if (plain === 'codex') { closePhase(); block = 'say'; inDiff = false; setStatus('writing response'); return }
+        if (plain === 'thinking') { closePhase(); block = 'think'; setStatus('thinking through the request'); return }
+        if (plain === 'exec') { closePhase(); block = 'exec'; execHeader = true; setStatus('running command'); return }
+        if (plain === 'apply patch') { closePhase(); block = 'patch'; patchOk = null; setStatus('editing files'); return }
+        if (plain === 'tokens used') { closePhase(); block = 'tokens'; setStatus('wrapping up'); return }
         if (block === 'say') say(line)
         else if (block === 'think') {
           renderThinking(line)
@@ -392,12 +419,13 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
             const m = plain.match(/-l?c '([\s\S]+)' in /)
             const cmd = m ? m[1] : plain.replace(/ in \/.*$/, '')
             setStatus('running ' + compactCommand(cmd, 42))
-            print(toolCardHeader({ name: 'exec', status: 'running', subtitle: compactCommand(cmd) }))
-            lastBlank = false
+            execCommand = cmd
           } else if (/succeeded in \S+:?\s*$/.test(plain)) {
-            print(green('    ✓ ') + faint(plain.trim().replace(/:$/, '')))
+            execStatus = 'completed'
+            closeExec()
           } else if (/(failed|exited \d+) in \S+:?\s*$/.test(plain)) {
-            print(red('    ✗ ') + faint(plain.trim().replace(/:$/, '')))
+            execStatus = 'error'
+            closeExec()
           }
           // command output itself stays quiet — codex narrates what matters
         } else if (block === 'patch') {
@@ -422,6 +450,7 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
         }
       },
       flush() {
+        closePhase()
         // stderr log went missing (future codex versions?) — fall back to stdout
         if (!spokeFromLog && finalAnswer.some((l) => stripAnsi(l).trim())) {
           for (const line of finalAnswer) flow(line)
@@ -438,22 +467,83 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
   }
 
   if (providerId === 'opencode') {
-    // Drop runtime boilerplate, then normalize shell transcripts, markdown
-    // fences, todos, and diffs into the same compact Akorith flow.
-    let started = false
+    // JSON events let us collapse each tool call into one bounded card instead
+    // of leaking OpenCode's repeated TODO tables, XML metadata, and full test
+    // transcripts into the terminal.
     const emit = createFlowLinePrinter(print, { suppressRuntimeBanner: true })
-    const route = (line) => {
-      const plain = stripAnsi(line).trim()
-      if (/^\$\s+/.test(plain)) setStatus('running command')
-      else if (/^[-–—]>|^→|^➜/.test(plain)) setStatus('reading context')
-      else if (plain) setStatus('writing response')
-      if (!started) {
-        if (!plain || /^>\s*(build|run)\b/i.test(plain)) return
-        started = true
+    const reasoning = []
+    const shownTools = new Set()
+    let latestUsage = null
+    let minimalThinkingShown = false
+    const flushReasoning = () => {
+      if (!reasoning.length) return
+      if (thinkingMode === 'show') {
+        for (const row of formatReasoningBlock(reasoning.splice(0))) print(row)
+      } else {
+        reasoning.length = 0
       }
-      emit(line)
+      minimalThinkingShown = false
     }
-    return { stdoutLine: route, stderrLine: route, flush() {} }
+    const route = (line) => {
+      const event = parseOpenCodeEvent(line)
+      if (!event) {
+        if (stripAnsi(line).trim()) emit(line)
+        return
+      }
+      const part = event.part || {}
+      if (event.type === 'reasoning' || part.type === 'reasoning') {
+        const value = String(part.text || event.text || '').trim()
+        if (!value || thinkingMode === 'hide') return
+        setStatus('thinking through the request')
+        if (thinkingMode === 'minimal') {
+          if (!minimalThinkingShown) print(faint('  ◐ reasoning…'))
+          minimalThinkingShown = true
+        } else {
+          reasoning.push(...value.split(/\r?\n/))
+        }
+        return
+      }
+      if (event.type === 'tool_use' || part.type === 'tool') {
+        flushReasoning()
+        const state = part.state || {}
+        if (!['completed', 'error'].includes(state.status)) return
+        const key = `${part.callID || part.id || ''}:${state.status}`
+        if (shownTools.has(key)) return
+        shownTools.add(key)
+        const failed = state.status === 'error' || (Number.isFinite(Number(state.metadata?.exit)) && Number(state.metadata?.exit) !== 0)
+        setStatus(failed ? 'tool failed' : `completed ${part.tool || 'tool'}`)
+        for (const row of openCodeToolEventLines(event)) print(row)
+        return
+      }
+      if (event.type === 'text' || part.type === 'text') {
+        flushReasoning()
+        setStatus('writing response')
+        for (const row of String(part.text || event.text || '').split(/\r?\n/)) emit(row)
+        return
+      }
+      if (event.type === 'step_finish' || part.type === 'step-finish') {
+        flushReasoning()
+        if (part.tokens) latestUsage = {
+          input: part.tokens.input,
+          output: part.tokens.output,
+          total: part.tokens.total,
+        }
+        return
+      }
+      if (event.type === 'error') {
+        flushReasoning()
+        print(red('  ✗ OpenCode: ') + bright(String(event.error?.message || event.message || 'provider error')))
+      }
+    }
+    return {
+      stdoutLine: route,
+      stderrLine: route,
+      flush() {
+        flushReasoning()
+        emit.flush?.()
+        if (latestUsage) reportUsage(latestUsage)
+      },
+    }
   }
 
   // claude / ollama: answer arrives on stdout as-is (diff regions get colored)
@@ -470,8 +560,92 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
         print(dim(plain))
       }
     },
-    flush() {},
+    flush() { emit.flush?.() },
   }
+}
+
+export function formatReasoningBlock(lines = [], { width = terminalWidth(), maxLines = 8 } = {}) {
+  const notes = []
+  for (const value of lines) {
+    const clean = stripAnsi(value).replace(/\s+/g, ' ').trim()
+    if (clean && clean !== notes.at(-1)) notes.push(clean)
+  }
+  if (!notes.length) return []
+  const limit = Math.max(3, Number(maxLines) || 8)
+  const visible = notes.length > limit
+    ? [...notes.slice(0, limit - 2), `… ${notes.length - limit + 1} more reasoning lines`, notes.at(-1)]
+    : notes
+  const header = violet('  ◆ ') + bold('Reasoning') + faint(` · ${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`)
+  return [header, ...toolCardBody(visible.map((line) => dim(line)), { width: Math.max(32, width) })]
+}
+
+export function normalizeProviderMetadata(line) {
+  const plain = stripAnsi(line).trim()
+  if (!plain) return { skip: false, line }
+  if (/^<\/?(?:shell_metadata|tool_metadata)>$/i.test(plain)) return { skip: true, line: '' }
+  const timeout = plain.match(/shell tool terminated command after exceeding timeout\s+(\d+)\s*ms/i)
+  if (timeout) {
+    const seconds = Math.max(1, Math.round(Number(timeout[1]) / 1000))
+    return {
+      skip: false,
+      line: toolCardHeader({ name: 'shell', status: 'error', subtitle: `timed out after ${seconds}s` }),
+    }
+  }
+  if (/^<\/?[a-z_][^>]*>$/i.test(plain)) return { skip: true, line: '' }
+  return { skip: false, line }
+}
+
+export function parseOpenCodeEvent(line) {
+  const plain = stripAnsi(line).trim()
+  if (!plain.startsWith('{')) return null
+  try {
+    const event = JSON.parse(plain)
+    return event && typeof event === 'object' && event.type ? event : null
+  } catch {
+    return null
+  }
+}
+
+function compactToolTarget(input = {}) {
+  const command = input.command || input.cmd
+  if (command) return compactCommand(String(command), 88)
+  const target = input.filePath || input.path || input.filename || input.pattern || input.query || input.glob
+  if (!target) return ''
+  const clean = String(target).replace(/\\/g, '/')
+  const parts = clean.split('/').filter(Boolean)
+  return compactCommand(parts.length > 2 ? parts.slice(-2).join('/') : clean, 88)
+}
+
+function compactToolOutput(output, { maxLines = 5 } = {}) {
+  const lines = String(output || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => stripAnsi(line).trim())
+    .filter((line) => line && !/^\(no output\)$/i.test(line) && !/^<\/?[a-z_][^>]*>$/i.test(line))
+  if (!lines.length) return []
+  const summary = lines.filter((line) => /^(?:tests?|suites?|pass|fail|cancelled|skipped|todo|duration_ms)\b/i.test(line))
+  if (summary.length) return summary.slice(-maxLines)
+  if (lines.length <= maxLines) return lines
+  return [...lines.slice(0, 2), `… ${lines.length - 4} lines omitted`, ...lines.slice(-2)]
+}
+
+export function openCodeToolEventLines(event, { width = terminalWidth() } = {}) {
+  const part = event?.part || {}
+  const state = part.state || {}
+  const name = String(part.tool || 'default').toLowerCase()
+  const exitCode = Number(state.metadata?.exit)
+  const failedExit = Number.isFinite(exitCode) && exitCode !== 0
+  const status = state.status === 'error' || failedExit ? 'error' : 'completed'
+  const subtitle = compactToolTarget(state.input || {}) || compactCommand(part.title || '', 88)
+  const rows = [toolCardHeader({ name, status, subtitle })]
+  const showOutput = ['bash', 'shell', 'exec'].includes(name) || status === 'error'
+  if (showOutput) {
+    const output = state.output || state.error || state.metadata?.output || ''
+    const body = compactToolOutput(output)
+    if (failedExit) body.push(`exit ${exitCode}`)
+    if (body.length) rows.push(...toolCardBody(body.map((line) => dim(line)), { width: Math.max(32, width) }))
+  }
+  return rows
 }
 
 function parseTokenUsage(line) {
@@ -551,7 +725,10 @@ function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
   }
   const emitDiffAware = diffAwareLine(emitPlain)
 
-  return (line) => {
+  const flow = (line) => {
+    const normalized = normalizeProviderMetadata(line)
+    if (normalized.skip) return
+    line = normalized.line
     const plain = stripAnsi(line).trimEnd()
     const trimmed = plain.trim()
 
@@ -610,6 +787,10 @@ function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
 
     emitDiffAware(line)
   }
+  flow.flush = () => {
+    if (inCode) flushCode()
+  }
+  return flow
 }
 
 function terminalWidth() {
@@ -784,7 +965,7 @@ function lineSplitter(onLine) {
 export function runTurn({ selection, prompt, resume, cwd, mode = 'act', options = {} }, { onSpawn, onLine, onUsage } = {}) {
   const normalized = normalizeModelSelection(selection)
   const provider = PROVIDERS[normalized.provider]
-  const args = provider.args({ prompt, model: normalized.model, reasoningEffort: normalized.reasoningEffort, resume, mode, options })
+  const args = provider.args({ prompt, model: normalized.model, reasoningEffort: normalized.reasoningEffort, resume, cwd, mode, options })
   return new Promise((resolve) => {
     const env = { ...process.env, FORCE_COLOR: '1', CLICOLOR_FORCE: '1' }
     delete env.NO_COLOR

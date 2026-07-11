@@ -162,8 +162,9 @@ export function composerLayout({
 } = {}) {
   const viewport = normalizeViewport(width, height)
   const tier = layoutTier(viewport.width, viewport.height)
+  const compactInset = tier === 'compact' && viewport.width >= 28 ? 4 : 0
   const outerWidth = tier === 'compact'
-    ? viewport.width
+    ? viewport.width - compactInset
     : Math.max(44, Math.min(126, viewport.width - 4))
   const left = Math.max(0, Math.floor((viewport.width - outerWidth) / 2))
   const indent = ' '.repeat(left)
@@ -505,6 +506,7 @@ export class TerminalScreen {
     this.maxTranscriptRows = 4000
     this.transcriptOffset = 0
     this.todos = []
+    this.lastViewport = null
   }
 
   dimensions() {
@@ -640,8 +642,12 @@ export class TerminalScreen {
 
   renderNow() {
     if (!this.started) return
-    const frame = buildFrame({ ...this.dimensions(), ...this.state(), transcript: this.transcript, transcriptOffset: this.transcriptOffset, overlay: this.overlay, notice: this.notice, spinner: this.spinner, todos: this.todos })
+    const viewport = this.dimensions()
+    const resized = !this.lastViewport || this.lastViewport.width !== viewport.width || this.lastViewport.height !== viewport.height
+    this.lastViewport = viewport
+    const frame = buildFrame({ ...viewport, ...this.state(), transcript: this.transcript, transcriptOffset: this.transcriptOffset, overlay: this.overlay, notice: this.notice, spinner: this.spinner, todos: this.todos })
     const body = frame.lines.map((line, index) => `\x1b[${index + 1};1H${line}\x1b[K`).join('')
-    this.output.write(`\x1b[?25l\x1b[?6l\x1b[?7l\x1b[r${body}\x1b[${frame.cursorRow};${frame.cursorColumn}H\x1b[?25h`)
+    const clear = resized ? '\x1b[2J' : ''
+    this.output.write(`\x1b[?25l\x1b[?6l\x1b[?7l\x1b[r${clear}${body}\x1b[${frame.cursorRow};${frame.cursorColumn}H\x1b[?25h`)
   }
 }

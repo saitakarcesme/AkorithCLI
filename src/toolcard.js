@@ -28,6 +28,7 @@ export const TOOL_ICONS = {
   skill: '★',
   todos: '☑',
   todo: '☑',
+  todowrite: '☑',
   default: '·',
 }
 
@@ -48,6 +49,7 @@ export const TOOL_TITLES = {
   skill: 'skill',
   todos: 'todos',
   todo: 'todos',
+  todowrite: 'todos',
 }
 
 export function toolIcon(name) {

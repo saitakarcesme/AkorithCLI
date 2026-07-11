@@ -131,26 +131,24 @@ hidden private chain-of-thought from models.
 
 ### Responsive terminal workspace
 
-Interactive TTY sessions use one atomic full-screen frame: a persistent Akorith
-header, a scrollable transcript/overlay area, and a closed composer anchored to
-the bottom edge. The layout switches between compact, regular, and wide modes,
-keeps the cursor stable during resize, and measures emoji/CJK text by terminal
-cell width. Non-TTY and `TERM=dumb` output keeps the plain script-friendly flow.
+Interactive sessions use the terminal's native scrollback by default. Prompts,
+reasoning summaries, tool cards, diffs, and final responses flow downward as one
+continuous log, so trackpad/wheel scrolling stays smooth and completed output is
+never trapped inside a small viewport. The startup header scrolls away naturally.
+Non-TTY and `TERM=dumb` output use the same script-friendly flow.
 
 - `Enter` sends; `Shift+Enter` or `Ctrl+J` inserts a newline.
 - `↑`/`↓` recall prompt history and restore the unfinished draft.
 - `Ctrl+P` opens the filterable command palette; `Alt+M` opens models where supported.
-- Mouse wheel or `PageUp`/`PageDown` scrolls the transcript; streaming output keeps the selected scroll position. `Ctrl+X`, then `G`, opens `/timeline`.
+- Mouse wheel, trackpad, and the terminal's normal shortcuts scroll native history. `/timeline` remains available for session transcript navigation.
 - `Ctrl+T` cycles reasoning visibility; `Ctrl+C` cancels a turn or activates the exit guard.
-- `AKORITH_REDUCED_MOTION=1` disables animation, `AKORITH_MONO=1` disables brand color,
-  and `AKORITH_NO_FULLSCREEN=1` selects the classic streaming fallback.
+- `AKORITH_REDUCED_MOTION=1` disables animation and `AKORITH_MONO=1` disables brand color.
+  `AKORITH_FULLSCREEN=1` opts into the legacy fixed dashboard; `AKORITH_NO_FULLSCREEN=1`
+  always forces native scrollback.
 
-Wide terminals report model, permission mode, provider context, cumulative
-tokens, queue depth, and active plan tasks in the right sidebar. Narrower
-terminals show a compact model/mode/token footer. Keyboard shortcuts are kept
-out of the composer and are available through `/help`.
-The header retains session/turn identity, working directory, git branch/dirty
-state, provider availability, and working/ready status after every turn.
+Model, mode, context, and token totals stay in the inline composer status instead
+of a right sidebar, avoiding clipped columns when the terminal window changes.
+Keyboard shortcuts remain available through `/help`.
 
 ### Permission modes
 

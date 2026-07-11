@@ -54,6 +54,13 @@ test('composer keeps typed text inside a closed box', () => {
   assert.ok(layout.lines.every((line) => visibleLength(line) === 80))
 })
 
+test('compact composer keeps a small edge inset when there is room', () => {
+  const layout = composerLayout({ width: 50, height: 14, input: 'hello', cursor: 5 })
+  assert.ok(layout.lines[0].startsWith('  ╭'))
+  assert.ok(layout.lines[0].trimEnd().endsWith('╮'))
+  assert.ok(layout.lines.every((line) => visibleLength(line) === 50))
+})
+
 test('narrow composer status drops duplicate provider branding', () => {
   assert.equal(compactComposerModel('olympus · codex/gpt-5.5 · high'), 'gpt-5.5 · high')
   assert.equal(compactComposerModel('gaia · opencode-go/glm-5.2'), 'glm-5.2')
@@ -249,6 +256,19 @@ test('full-screen paint addresses every row absolutely from the first row', () =
   assert.ok(paint)
   assert.ok(paint.includes('█████'))
   assert.ok(!paint.includes('\n'))
+  screen.stop()
+})
+
+test('full-screen repaint clears once after terminal resize', () => {
+  const writes = []
+  const output = { isTTY: true, columns: 120, rows: 32, write: (value) => writes.push(value) }
+  const screen = new TerminalScreen({ output })
+  screen.start()
+  writes.length = 0
+  output.columns = 80
+  output.rows = 24
+  screen.renderNow()
+  assert.ok(writes.at(-1).includes('\x1b[2J'))
   screen.stop()
 })
 

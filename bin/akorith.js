@@ -52,8 +52,8 @@ Common options:
 
 Model specs: <provider>[/<model>] with provider one of claude, codex, opencode, ollama.
 OpenCode exact ids also work as -m opencode-go/glm-5.2.
-Inside the workspace: persistent responsive header, bottom-anchored composer, /model to switch,
-/timeline to browse output, /options for run flags, and /help for everything else.`)
+Inside the workspace: native terminal scrollback, an inline composer, /model to switch,
+/timeline to browse saved output, /options for run flags, and /help for everything else.`)
 }
 
 function die(message) {
@@ -260,6 +260,7 @@ async function runPrompt(state) {
     usage()
     return 0
   }
+  process.chdir(state.cwd)
   if (state.prompt === null) {
     await startRepl({ version, initialModel: state.initialModel, initialOptions: state.options })
     // The interactive REPL took over — keep Node alive for the readline loop.
@@ -269,7 +270,6 @@ async function runPrompt(state) {
     console.error('Empty prompt.')
     return 1
   }
-  process.chdir(state.cwd)
   const selection = selectionFrom(state)
   return runTurn({ selection, prompt: state.prompt, resume: false, cwd: process.cwd(), mode: state.mode, options: state.options })
 }
