@@ -33,7 +33,7 @@ Usage:
   akorith sessions [--all]             list saved Akorith sessions
   akorith resume (--last|<id>)         resume a saved Akorith session
   akorith doctor                       diagnose local CLIs and global install
-  akorith update                       update the global akorith command from this repo/package
+  akorith update                       fetch latest main and update the global akorith command
   akorith codex <command> ...          pass through to the Codex CLI
 
 Common options:

@@ -28,6 +28,62 @@ function gitOutput(args, cwd) {
   return result.status === 0 ? result.stdout.trim() : ''
 }
 
+function emitOutput(onOutput, value) {
+  if (!value) return
+  if (onOutput) onOutput(String(value).trimEnd())
+  else console.log(String(value).trimEnd())
+}
+
+function runLogged(bin, args, { cwd, onOutput = null } = {}) {
+  const result = onOutput
+    ? spawnSync(bin, args, { cwd, encoding: 'utf8' })
+    : spawnSync(bin, args, { cwd, stdio: 'inherit' })
+  if (onOutput) {
+    if (result.stdout) onOutput(result.stdout.trimEnd())
+    if (result.stderr) onOutput(result.stderr.trimEnd())
+  }
+  return result.status ?? 1
+}
+
+function isGitRepo(cwd) {
+  return run('git', ['rev-parse', '--is-inside-work-tree'], { cwd }).status === 0
+}
+
+function remoteDefaultBranch(cwd) {
+  const head = gitOutput(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], cwd)
+  if (head.startsWith('origin/')) return head.slice('origin/'.length)
+  for (const branch of ['main', 'master']) {
+    if (run('git', ['show-ref', '--verify', `refs/remotes/origin/${branch}`], { cwd }).status === 0) return branch
+  }
+  return ''
+}
+
+function hasLocalBranch(cwd, branch) {
+  return run('git', ['show-ref', '--verify', `refs/heads/${branch}`], { cwd }).status === 0
+}
+
+function updateLinkedRepo({ onOutput = null } = {}) {
+  if (!commandExists('git') || !isGitRepo(ROOT)) return 0
+  const dirty = gitOutput(['status', '--porcelain'], ROOT)
+  if (dirty) {
+    emitOutput(onOutput, 'Akorith update stopped: linked checkout has local changes.')
+    emitOutput(onOutput, 'Commit/stash them or run npm install -g . manually if you want this exact local tree.')
+    return 1
+  }
+  emitOutput(onOutput, 'Fetching latest Akorith from origin...')
+  let code = runLogged('git', ['fetch', '--prune', 'origin'], { cwd: ROOT, onOutput })
+  if (code !== 0) return code
+  const branch = remoteDefaultBranch(ROOT)
+  if (!branch) return 0
+  const current = gitOutput(['branch', '--show-current'], ROOT)
+  if (current !== branch) {
+    const args = hasLocalBranch(ROOT, branch) ? ['switch', branch] : ['switch', '--track', `origin/${branch}`]
+    code = runLogged('git', args, { cwd: ROOT, onOutput })
+    if (code !== 0) return code
+  }
+  return runLogged('git', ['pull', '--ff-only', 'origin', branch], { cwd: ROOT, onOutput })
+}
+
 function truncate(value, max = 24000) {
   if (value.length <= max) return value
   return `${value.slice(0, max)}\n\n[akorith: truncated ${value.length - max} chars]`
@@ -150,15 +206,12 @@ export function runUpdateCommand({ local = false, onOutput = null } = {}) {
   const globalRoot = run('npm', ['root', '-g']).stdout?.trim()
   const installed = globalRoot ? path.join(globalRoot, 'akorith') : ''
   const linkedHere = installed && fs.existsSync(installed) && fs.realpathSync(installed) === ROOT
-  const args = local || linkedHere ? ['install', '-g', '.'] : ['install', '-g', 'akorith']
-  const result = onOutput
-    ? spawnSync('npm', args, { cwd: ROOT, encoding: 'utf8' })
-    : spawnSync('npm', args, { cwd: ROOT, stdio: 'inherit' })
-  if (onOutput) {
-    if (result.stdout) onOutput(result.stdout.trimEnd())
-    if (result.stderr) onOutput(result.stderr.trimEnd())
+  if (!local && linkedHere) {
+    const code = updateLinkedRepo({ onOutput })
+    if (code !== 0) return code
   }
-  return result.status ?? 1
+  const args = local || linkedHere ? ['install', '-g', '.'] : ['install', '-g', 'akorith']
+  return runLogged('npm', args, { cwd: ROOT, onOutput })
 }
 
 export function printSessions({ all = false, cwd = null } = {}) {

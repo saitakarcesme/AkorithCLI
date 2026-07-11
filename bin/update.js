@@ -10,7 +10,7 @@ if (target === 'akorith' || target === '--akorith' || target === '-a') {
 }
 
 if (!target || target === '--help' || target === '-h') {
-  console.log('Usage: update akorith   — update the Akorith CLI from this repo (or npm if installed from the registry).')
+  console.log('Usage: update akorith   — fetch the latest Akorith main checkout, then update the global CLI.')
   console.log('Inside the Akorith workspace you can also use /update or `akorith update`.')
   process.exit(0)
 }

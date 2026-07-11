@@ -88,7 +88,7 @@ matter when you want to live in one terminal:
 | `-a, --ask-for-approval` | accepted for compatibility; forwarded only where the provider supports it |
 | `codex review` | `akorith review` with `--uncommitted`, `--base`, `--commit`, `--title` |
 | `resume/archive/delete/fork` | native Akorith session commands and slash commands |
-| `doctor/update` | `akorith doctor` and `akorith update` |
+| `doctor/update` | `akorith doctor` and `akorith update` (fetch latest main, then reinstall global CLI) |
 
 Codex-only administrative tools are still reachable without leaving Akorith:
 
