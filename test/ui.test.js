@@ -64,7 +64,7 @@ test('panelLines keeps every rendered row inside the requested width', () => {
   assert.ok(lines.every((line) => visibleLength(line) <= 48))
 })
 
-test('grokSplashLines renders a Grok Build-style splash inside terminal width', () => {
+test('grokSplashLines renders the Akorith workspace splash inside terminal width', () => {
   process.env.COLUMNS = '134'
   process.env.LINES = '37'
 
@@ -77,10 +77,14 @@ test('grokSplashLines renders a Grok Build-style splash inside terminal width', 
   assert.ok(promptLine > 0)
   assert.equal(promptLine, lines.length)
   assert.ok(stripAnsi(prompt).trim().startsWith('╰─ ›'))
-  assert.ok(lines.some((line) => line.includes('Akorith CLI Beta')))
-  assert.ok(lines.some((line) => line.includes('New worktree')))
-  assert.ok(lines.some((line) => stripAnsi(line).includes(process.platform === 'darwin' ? '⌘W' : 'Ctrl+W')))
-  assert.ok(lines.some((line) => line.includes('Akorith Build · always-approve')))
+  assert.ok(lines.some((line) => line.includes('Akorith CLI')))
+  assert.ok(lines.some((line) => line.includes('Your agent workspace is ready.')))
+  assert.ok(lines.some((line) => line.includes('Start typing to begin')))
+  assert.ok(lines.some((line) => line.includes('/help · /model · /sessions · /review')))
+  assert.ok(lines.some((line) => stripAnsi(line).includes(process.platform === 'darwin' ? '⌘Q' : 'Ctrl+Q')))
+  assert.ok(!lines.some((line) => line.includes('Akorith Build is ready!')))
+  assert.ok(!lines.some((line) => line.includes('New worktree')))
+  assert.ok(!lines.some((line) => line.includes('always-approve')))
   assert.ok(lines.some((line) => stripAnsi(line).includes('input 0')))
   assert.ok(lines.some((line) => stripAnsi(line).includes('output 0')))
   assert.ok(lines.some((line) => stripAnsi(line).includes('total 0')))
@@ -97,7 +101,7 @@ test('grokInputBoxLines keeps metadata above the active readline prompt', () => 
   assert.equal(box.promptLine, box.lines.length)
   assert.ok(stripAnsi(box.lines[0]).trim().startsWith('╭'))
   assert.ok(stripAnsi(box.lines[1]).includes('input 1'))
-  assert.ok(stripAnsi(box.lines[1]).includes('Akorith Build'))
+  assert.ok(stripAnsi(box.lines[1]).includes('Akorith CLI'))
   assert.ok(stripAnsi(prompt).trim().startsWith('╰─ ›'))
   assert.ok(box.lines.every((line) => visibleLength(line) <= 90))
 })

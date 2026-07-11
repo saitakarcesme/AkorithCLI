@@ -387,7 +387,7 @@ function compactInputStatus(status, width) {
 function inputStatusLine({ width, status, label }) {
   const safeWidth = Math.max(36, width)
   const inner = safeWidth - 4
-  const labelValue = label && inner < 104 && /^Akorith Build\b/.test(label) ? 'Akorith Build' : label
+  const labelValue = label && inner < 104 && /^Akorith CLI\b/.test(label) ? 'Akorith CLI' : label
   const labelBudget = Math.min(34, Math.max(8, Math.floor(inner * 0.26)))
   const labelText = labelValue ? faint(` ${fitText(labelValue, labelBudget, { middle: true })} `) : ''
   const statusBudget = Math.max(8, inner - visibleLength(labelText) - 1)
@@ -420,7 +420,7 @@ export function grokInputPrompt({ width = terminalColumns() } = {}) {
 export function grokInputBoxLines({
   width = terminalColumns(),
   inputStatus = 'model default · ctx provider · input 0 · output 0 · total 0',
-  label = 'Akorith Build · always-approve',
+  label = 'Akorith CLI',
 } = {}) {
   const inputWidth = Math.max(36, Math.min(126, width - 8))
   const inputLeft = Math.max(2, Math.floor((width - inputWidth) / 2))
@@ -465,12 +465,11 @@ export function grokSplashLines({
     wordmark.forEach((line, index) => {
       if (index < body.length) body[index + 2] = overlayAt(body[index + 2], line, artCol, inner)
     })
-    body[1] = overlayAt(body[1], `${bold('Akorith CLI Beta')}  ${faint(version)}`, textCol, inner)
-    body[3] = overlayAt(body[3], yellow(bold('Akorith Build is ready!')), textCol, inner)
-    body[4] = overlayAt(body[4], faint('Claude, Codex, and OpenCode in one workspace.'), textCol, inner)
-    body[7] = overlayAt(body[7], shortcutLine('New worktree', platformShortcut('w'), inner - textCol - 4), textCol, inner)
-    body[8] = overlayAt(body[8], shortcutLine('Resume session', platformShortcut('s'), inner - textCol - 4), textCol, inner)
-    body[9] = overlayAt(body[9], bold('Changelog'), textCol, inner)
+    body[1] = overlayAt(body[1], `${bold('Akorith CLI')}  ${faint(version)}`, textCol, inner)
+    body[3] = overlayAt(body[3], yellow(bold('Your agent workspace is ready.')), textCol, inner)
+    body[4] = overlayAt(body[4], faint('Claude, Codex, and OpenCode in one responsive terminal.'), textCol, inner)
+    body[7] = overlayAt(body[7], `${cyan('›')} ${bold('Start typing to begin')}`, textCol, inner)
+    body[8] = overlayAt(body[8], faint('/help · /model · /sessions · /review'), textCol, inner)
     body[10] = overlayAt(body[10], shortcutLine('Quit', platformShortcut('q'), inner - textCol - 4), textCol, inner)
   } else {
     wordmark.forEach((line, index) => {
@@ -478,12 +477,11 @@ export function grokSplashLines({
     })
     const textStart = Math.min(8, Math.max(2, Math.floor(inner * 0.12)))
     const offset = wordmark.length + 2
-    body[offset] = overlayAt(body[offset], `${bold('Akorith CLI Beta')}  ${faint(version)}`, textStart, inner)
-    body[offset + 2] = overlayAt(body[offset + 2], yellow(bold('Akorith Build is ready!')), textStart, inner)
-    body[offset + 3] = overlayAt(body[offset + 3], faint('Local agent workspace for your terminal.'), textStart, inner)
-    body[offset + 5] = overlayAt(body[offset + 5], shortcutLine('New worktree', platformShortcut('w'), inner - textStart - 2), textStart, inner)
-    body[offset + 6] = overlayAt(body[offset + 6], shortcutLine('Resume session', platformShortcut('s'), inner - textStart - 2), textStart, inner)
-    body[offset + 7] = overlayAt(body[offset + 7], bold('Changelog'), textStart, inner)
+    body[offset] = overlayAt(body[offset], `${bold('Akorith CLI')}  ${faint(version)}`, textStart, inner)
+    body[offset + 2] = overlayAt(body[offset + 2], yellow(bold('Your agent workspace is ready.')), textStart, inner)
+    body[offset + 3] = overlayAt(body[offset + 3], faint('One responsive terminal for Claude, Codex, and OpenCode.'), textStart, inner)
+    body[offset + 5] = overlayAt(body[offset + 5], `${cyan('›')} ${bold('Start typing to begin')}`, textStart, inner)
+    body[offset + 6] = overlayAt(body[offset + 6], faint('/help · /model · /sessions · /review'), textStart, inner)
     body[offset + 8] = overlayAt(body[offset + 8], shortcutLine('Quit', platformShortcut('q'), inner - textStart - 2), textStart, inner)
   }
   for (const row of body) lines.push(panelPad + centeredBoxLine(row, panelWidth))
