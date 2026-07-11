@@ -7,7 +7,7 @@ import {
 } from './providers.js'
 import {
   rule, bold, dim, faint, text, violet, green, red, yellow,
-  diffAdd, diffDel, tintCursor, resetCursor, fitText, grokInputBoxLines, grokInputPrompt, grokSplashLines, padVisible,
+  diffAdd, diffDel, tintCursor, resetCursor, fitText, padVisible, pixelLogoLines,
   panelLines, setTerminalAdapter, stripAnsi, userMessageLines, visibleLength, wrapWords,
 } from './ui.js'
 import { loadConfig, saveConfig, homeRelative } from './state.js'
@@ -261,6 +261,32 @@ export function shouldUseFullScreen({ env = process.env, input = process.stdin, 
     Boolean(input.isTTY) && Boolean(output.isTTY) && env.TERM !== 'dumb'
 }
 
+export function nativeSplashLines({
+  width = 80,
+  cwd = '~',
+  model = 'default',
+  mode = 'act',
+  tip = null,
+} = {}) {
+  const safeWidth = Math.max(20, Number(width) || 80)
+  const center = (line) => `${' '.repeat(Math.max(0, Math.floor((safeWidth - visibleLength(line)) / 2)))}${line}`
+  const logoRows = pixelLogoLines(safeWidth, safeWidth >= 72 ? 6 : 3).map(center)
+  const rows = [
+    '',
+    ...logoRows,
+    '',
+    `${violet(bold('new session'))} ${dim('● ready')}`,
+    dim(`${cwd} · ${model} · ${mode}`),
+    '',
+    yellow(bold('Your agent workspace is ready.')),
+    `${violet('›')} ${text(bold('Start typing to begin'))}`,
+    faint('/help · /model · /sessions · /review'),
+  ]
+  if (tip) rows.push('', `${text(bold('Tip:'))} ${dim(fitText(tip, Math.max(20, safeWidth - 8)))}`)
+  rows.push('')
+  return rows.map((line) => fitText(line, safeWidth))
+}
+
 export async function startRepl({ version, initialModel, initialOptions = {}, initialSessionId = null } = {}) {
   const config = loadConfig()
   const available = detectProviders()
@@ -500,7 +526,6 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   renderSplash({ tip: bootNotice ? stripAnsi(bootNotice) : null })
 
   function currentPrompt() {
-    if (splashActive || promptBoxActive) return grokInputPrompt()
     return text(bold('› '))
   }
 
@@ -513,18 +538,8 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     rl.prompt(force)
   }
 
-  function splashInputStatus() {
-    return [
-      compactModelStatus(selection),
-      `ctx ${contextWindowFor(selection)}`,
-      `input ${formatUsageCount(usageTotals.input)}`,
-      `output ${formatUsageCount(usageTotals.output)}`,
-      `total ${formatUsageCount(usageTotals.total)}`,
-    ].join(' · ')
-  }
-
   function renderSplash({ tip = null } = {}) {
-    splashActive = true
+    splashActive = Boolean(terminalScreen)
     promptBoxActive = false
     refreshPrompt()
     if (terminalScreen) {
@@ -534,17 +549,13 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       terminalScreen.scheduleRender()
       return
     }
-    const { lines } = grokSplashLines({
-      version,
-      tip: tip || 'Use /timeline or ctrl+x g to jump to specific messages',
-      inputStatus: splashInputStatus(),
-    })
-    console.clear()
-    if (process.stdout.isTTY) {
-      process.stdout.write(lines.join('\n') + '\n')
-    } else {
-      for (const line of lines) console.log(line)
-    }
+    for (const line of nativeSplashLines({
+      width: terminalColumns(),
+      cwd: homeRelative(process.cwd()),
+      model: formatModel(selection),
+      mode,
+      tip,
+    })) console.log(line)
   }
 
   function renderPromptBox() {
@@ -554,14 +565,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       terminalScreen.scheduleRender()
       return true
     }
-    promptBoxActive = true
-    refreshPrompt()
-    const { lines } = grokInputBoxLines({
-      inputStatus: splashInputStatus(),
-    })
-    promptBoxPreludeRows = lines.length
-    process.stdout.write('\n' + lines.join('\n') + '\n')
-    return true
+    return false
   }
 
   function clearPromptBox({ afterSubmit = false } = {}) {

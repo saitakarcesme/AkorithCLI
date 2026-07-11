@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveModelSpec, shouldUseFullScreen } from '../src/repl.js'
+import { nativeSplashLines, resolveModelSpec, shouldUseFullScreen } from '../src/repl.js'
+import { stripAnsi, visibleLength } from '../src/ui.js'
 
 const tty = { isTTY: true }
 
@@ -15,6 +16,24 @@ test('legacy full-screen layout requires an explicit opt in', () => {
     input: tty,
     output: tty,
   }), false)
+})
+
+test('native splash is a scrollback-friendly welcome, not the old boxed dashboard copy', () => {
+  const lines = nativeSplashLines({
+    width: 90,
+    cwd: '~/Desktop/akorithcli',
+    model: 'gaia · opencode/deepseek-v4-flash-free',
+    mode: 'act',
+    tip: 'Use /timeline for transcript navigation',
+  })
+  const plain = lines.map(stripAnsi).join('\n')
+  assert.match(plain, /Your agent workspace is ready\./)
+  assert.match(plain, /Start typing to begin/)
+  assert.match(plain, /\/help · \/model · \/sessions · \/review/)
+  assert.doesNotMatch(plain, /Akorith Build is ready!/)
+  assert.doesNotMatch(plain, /New worktree/)
+  assert.doesNotMatch(plain, /always-approve/)
+  assert.ok(lines.every((line) => visibleLength(line) <= 90))
 })
 
 test('interactive OpenCode model specs retain their full provider model id', () => {
