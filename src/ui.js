@@ -566,31 +566,6 @@ export function resetCursor() {
 // so the thinking pulse is always the last thing on screen.
 // Smooth braille spinner for the leading glyph.
 const BRAILLE = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-// A trailing run of dots that fills and empties, so it breathes rather than
-// just cycling one dot at a time.
-const DOTS = ['   ', '·  ', '·· ', '···', ' ··', '  ·']
-
-// "Akoriting" with a highlight that sweeps across the word — a shimmer, brand
-// ramp on the lit letter, bright white just ahead/behind, dim elsewhere.
-function shimmer(word, tick) {
-  const chars = [...word]
-  if (!truecolor) {
-    // 16/256-color fallback: pulse the whole word between violet and dim.
-    return tick % 2 === 0 ? violet(word) : dim(word)
-  }
-  const span = chars.length + 3 // gap so the sweep has a rest between passes
-  const head = tick % span
-  const [hr, hg, hb] = rampColor((tick % 24) / 24)
-  return chars
-    .map((c, i) => {
-      const d = head - i
-      if (d === 0) return `\x1b[1m\x1b[38;2;${hr};${hg};${hb}m${c}\x1b[22m\x1b[39m`
-      if (d === 1 || d === -1) return `\x1b[38;2;220;221;224m${c}\x1b[39m` // bright trail
-      return `\x1b[38;2;120;121;128m${c}\x1b[39m` // dim base
-    })
-    .join('')
-}
-
 export function startSpinner(codename, display) {
   if (!process.stdout.isTTY && !terminalAdapter) {
     return { log: (line) => console.log(line), setStatus() {}, stop() {} }
@@ -609,10 +584,8 @@ export function startSpinner(codename, display) {
     const seconds = Math.round((Date.now() - startedAt) / 1000)
     const [r, g, b] = rampColor((tick % 20) / 20)
     const glyph = `\x1b[38;2;${r};${g};${b}m${BRAILLE[tick % BRAILLE.length]}\x1b[39m`
-    const dots = dim(DOTS[tick % DOTS.length])
-    const meta = compact(`${codename} · ${seconds}s · ${status}`, Math.max(18, terminalColumns() - 24))
-    // e.g.      ⠹ Akoriting···   atlantis · 5s
-    return `${indent}${glyph} ${shimmer('Akoriting', tick)}${dots}   ${faint(meta)}`
+    const meta = compact(`${status} · ${seconds}s`, Math.max(18, terminalColumns() - 18))
+    return `${indent}${glyph} ${bold(gradient('Akorithing...'))}${faint(' · ' + meta)}`
   }
   if (terminalAdapter) {
     const adapter = terminalAdapter

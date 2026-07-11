@@ -19,8 +19,9 @@ import { runDoctorCommand, runReviewCommand, runUpdateCommand, buildReviewPatch 
 import { COMMAND_CATALOG, filterCatalog, fuzzyMatch } from './palette.js'
 import { filePatch, parseDiff } from './review.js'
 import { InputEditor, ScreenInputAdapter } from './input-editor.js'
-import { decodeTerminalMouseInput, TerminalScreen } from './terminal-screen.js'
+import { TerminalScreen } from './terminal-screen.js'
 import { loadCodexModels, modelSelectionSpec, normalizeModelSelection } from './models.js'
+import { copyToClipboard } from './clipboard.js'
 
 const STATIC_MODEL_CHOICES = [
   { label: 'Atlantis · Claude Fable 5', spec: 'claude/claude-fable-5', aliases: ['fable', 'fable 5', 'fable 5 high'] },
@@ -39,6 +40,7 @@ const THINKING_MODES = {
 
 let cachedOpenCodeModels = null
 let cachedCodexModels = null
+let cachedOllamaModels = null
 
 function terminalColumns() {
   const columns = Number(process.stdout.columns || process.env.COLUMNS || 88)
@@ -150,6 +152,28 @@ function loadOpenCodeModels() {
   return cachedOpenCodeModels
 }
 
+export function parseOllamaList(output) {
+  const seen = new Set()
+  return stripCommandAnsi(output)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^NAME\s+ID\s+SIZE\s+MODIFIED\b/i.test(line))
+    .map((line) => line.split(/\s+/)[0])
+    .filter((model) => model && !seen.has(model) && seen.add(model))
+}
+
+function loadOllamaModels() {
+  if (cachedOllamaModels) return cachedOllamaModels
+  const result = spawnSync('ollama', ['list'], {
+    encoding: 'utf8',
+    env: { ...process.env, NO_COLOR: '1' },
+    timeout: 5000,
+  })
+  cachedOllamaModels = result.status === 0 ? parseOllamaList(result.stdout) : []
+  return cachedOllamaModels
+}
+
 function staticChoice(choice) {
   return { ...choice, parsed: parseModelSpec(choice.spec), visibleSpec: choice.spec }
 }
@@ -192,6 +216,18 @@ function openCodeChoice(modelID) {
   }
 }
 
+function ollamaChoice(modelID) {
+  const shortName = modelID.split('/').at(-1) || modelID
+  const tagless = shortName.replace(/:latest$/i, '')
+  return {
+    label: `Local · ${shortName}`,
+    spec: `ollama/${modelID}`,
+    visibleSpec: modelID,
+    parsed: { provider: 'ollama', model: modelID },
+    aliases: [modelID, shortName, tagless, `local ${shortName}`, `local ${tagless}`],
+  }
+}
+
 function choiceAliases(choice) {
   return [choice.label, choice.spec, choice.visibleSpec, ...(choice.aliases || [])].filter(Boolean)
 }
@@ -211,7 +247,7 @@ export function resolveModelSpec(input, choices = []) {
 const COMMANDS = [
   '/help', '/models', '/model', '/mode', '/thinking', '/connect', '/options', '/option',
   '/sessions', '/resume', '/fork', '/archive', '/unarchive', '/delete',
-  '/review', '/timeline', '/doctor', '/update', '/cd', '/new', '/clear', '/exit', '/quit',
+  '/review', '/timeline', '/copy', '/doctor', '/update', '/cd', '/new', '/clear', '/exit', '/quit',
 ]
 
 function uniqueList(values = []) {
@@ -358,8 +394,8 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   let terminalScreen = null
   let gitHeader = readGitHeaderState(process.cwd())
   let chordUntil = 0
-  let pendingMouseSequence = ''
   let pasteNoticeTimer = null
+  let lastTurnStart = 0
 
   function resetStarted(next = {}) {
     for (const key of Object.keys(started)) started[key] = Boolean(next[key])
@@ -637,7 +673,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     }
     const label = title === 'Review' ? 'Review' : title || (mode === 'act' ? 'Build' : 'Plan')
     console.log()
-    console.log(faint('  ◆ ') + bold(label) + faint(' · ') + dim(fitText(subtitle || formatModel(selection), Math.max(18, width - 14), { middle: true })))
+    console.log(faint('    ◆ ') + bold(label) + faint(' · ') + dim(fitText(subtitle || formatModel(selection), Math.max(18, width - 16), { middle: true })))
     console.log()
   }
 
@@ -687,6 +723,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     const seen = new Set()
     const choices = [
       ...(available.codex ? codexChoices() : []),
+      ...(available.ollama ? loadOllamaModels().map(ollamaChoice) : []),
       ...STATIC_MODEL_CHOICES.map(staticChoice),
       ...(available.opencode ? loadOpenCodeModels().map(openCodeChoice) : []),
     ]
@@ -728,7 +765,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       const spec = selected ? violet(fitText(specText, specWidth, { middle: true })) : faint(fitText(specText, specWidth, { middle: true }))
       rows.push(`${cursor} ${active} ${number} ${label} ${spec}`)
     })
-    rows.push(faint('examples: gpt 5.5 high · fable 5 · opencode-go/glm-5.2'))
+    rows.push(faint('examples: gpt 5.5 high · fable 5 · qwen3 · opencode-go/glm-5.2'))
     return panelLines({
       title: 'Model picker',
       subtitle: '↑/↓ · enter',
@@ -1581,6 +1618,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
       command('/fork <id>', 'fork a session into a fresh branch of work'),
       command('/review', 'browse and review the current diff file by file'),
       command('/timeline', 'browse, search, and jump through transcript rows'),
+      command('/copy [all]', 'copy the latest turn or full transcript to clipboard'),
       command('/doctor', 'diagnose local CLIs, auth helpers, and global install'),
       command('/connect', 'show and toggle GitHub, git, npm integrations'),
       command('/cd <dir>', 'change the active working directory'),
@@ -1606,7 +1644,8 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         shortcut('Ctrl+P', 'open the searchable command palette'),
         shortcut('Alt+M', 'open the model picker when supported by the terminal'),
         shortcut('↑ / ↓', 'move picker selection or recall prompt history'),
-        shortcut('Wheel / PgUp', 'scroll transcript; wheel down or PageDown returns'),
+        shortcut('PageUp / Down', 'browse older transcript rows and return to latest'),
+        shortcut('Ctrl+Shift+C', 'copy selected text; without selection copies the latest turn'),
         shortcut('Ctrl+X, G', 'open the transcript timeline'),
         shortcut('Ctrl+T', 'cycle reasoning visibility'),
         shortcut('Ctrl+C', 'cancel a turn; press twice while idle to exit'),
@@ -1676,6 +1715,19 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
         return
       }
       terminalScreen.setNotice(red('Usage: /timeline <row|tail|search text>'))
+      return
+    }
+    if (input === '/copy' || input === '/copy last' || input === '/copy all') {
+      if (!terminalScreen) {
+        console.log(dim('Copy is available in the interactive Akorith workspace.'))
+        return
+      }
+      const all = input === '/copy all'
+      const content = terminalScreen.transcriptText(all ? 0 : lastTurnStart)
+      const copied = copyToClipboard(content)
+      terminalScreen.setNotice(copied.ok
+        ? green(all ? 'Copied full transcript.' : 'Copied latest turn.')
+        : red(copied.error))
       return
     }
     if (input === '/help') {
@@ -1936,6 +1988,7 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     // A real prompt — hand it to the active provider, streaming. The turn opens
     // and closes with the same panel chrome used by the rest of the workspace.
     const session = ensureActiveSession()
+    lastTurnStart = terminalScreen?.transcript.length || 0
     console.log()
     printTurnHeader({
       title: mode === 'act' ? 'Build' : 'Plan',
@@ -2002,22 +2055,9 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
   if (process.stdin.isTTY) {
     readline.emitKeypressEvents(process.stdin, terminalScreen ? undefined : rl)
     process.stdin.on('keypress', (str, key = {}) => {
-      const eventSequence = String(key.sequence || str || '')
-      const decodedMouse = terminalScreen
-        ? decodeTerminalMouseInput(pendingMouseSequence, eventSequence)
-        : { buffer: '', event: null, captured: false }
-      pendingMouseSequence = decodedMouse.buffer
-      if (decodedMouse.captured && !decodedMouse.event) return
-      const mouse = decodedMouse.event
-      if (mouse) {
-        if (mouse.type === 'wheel') {
-          const selectionDelta = mouse.direction === 'up' ? -1 : 1
-          if (awaitingModelPick) moveModelPicker(selectionDelta)
-          else if (awaitingSessionPick) moveSessionPicker(selectionDelta)
-          else if (awaitingPalette) movePalette(selectionDelta)
-          else if (awaitingReview) moveReview(selectionDelta)
-          else terminalScreen.scroll(-selectionDelta * 3)
-        }
+      if (terminalScreen && key.name === 'c' && key.ctrl && key.shift) {
+        const copied = copyToClipboard(terminalScreen.transcriptText(lastTurnStart))
+        terminalScreen.setNotice(copied.ok ? green('Copied latest turn.') : red(copied.error))
         return
       }
       // ctrl+t cycles reasoning visibility: hide → minimal → show → hide.

@@ -74,7 +74,7 @@ export function toolCardHeader({ name, status, subtitle = '', title }) {
   const icon = toolIcon(name)
   const t = title || toolTitle(name)
   const chip = statusChip(status)
-  const head = violet('  ▸ ') + faint(icon) + ' ' + bold(t) + '  ' + chip
+  const head = violet('    ▸ ') + faint(icon) + ' ' + bold(t) + '  ' + chip
   if (subtitle) return head + faint('   ' + subtitle)
   return head
 }
@@ -85,22 +85,22 @@ export function toolCardBody(lines, { width = 100 } = {}) {
   const out = []
   for (const raw of lines) {
     const line = String(raw)
-    if (!line.trim()) { out.push(faint('  │')); continue }
+    if (!line.trim()) { out.push(faint('    │')); continue }
     // naive wrap
     const visible = line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
-    if (visible.length <= width - 4) {
-      out.push(faint('  │ ') + line)
+    if (visible.length <= width - 6) {
+      out.push(faint('    │ ') + line)
     } else {
       const words = line.split(' ')
       let row = ''
       for (const w of words) {
         if (!row) row = w
-        else if ((row + ' ' + w).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').length <= width - 4) row += ' ' + w
-        else { out.push(faint('  │ ') + row); row = w }
+        else if ((row + ' ' + w).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').length <= width - 6) row += ' ' + w
+        else { out.push(faint('    │ ') + row); row = w }
       }
-      if (row) out.push(faint('  │ ') + row)
+      if (row) out.push(faint('    │ ') + row)
     }
   }
-  out.push(faint('  ╵'))
+  out.push(faint('    ╵'))
   return out
 }

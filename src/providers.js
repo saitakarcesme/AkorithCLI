@@ -3,7 +3,7 @@
 // Atlantis = Claude, Olympus = Codex, Gaia = OpenCode.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import {
   startSpinner, stripAnsi, text as bright, dim, faint, green, red, violet, bold, diffAdd, diffDel,
   fitText, terminalColumns, wrapWords,
@@ -11,6 +11,7 @@ import {
 import { highlight, normalizeLang } from './highlight.js'
 import { toolCardHeader, toolCardBody } from './toolcard.js'
 import { normalizeModelSelection } from './models.js'
+import { commandExists, resolveCommand, runCommand } from './runtime.js'
 
 export const PROVIDERS = {
   claude: {
@@ -46,6 +47,9 @@ export const PROVIDERS = {
     args({ prompt, model, reasoningEffort, resume, mode, options = {} }) {
       const args = resume ? ['exec', 'resume', '--last'] : ['exec']
       args.push('--skip-git-repo-check')
+      // Akorith owns the presentation layer. Structured events keep Codex's
+      // progress, tools, file edits, and final response separate and stable.
+      args.push('--json')
       if (model) args.push('-m', model)
       if (reasoningEffort) args.push('-c', `model_reasoning_effort="${reasoningEffort}"`)
       for (const image of options.images || []) args.push('-i', image)
@@ -59,7 +63,6 @@ export const PROVIDERS = {
       if (options.strictConfig) args.push('--strict-config')
       if (options.search && !resume) args.push('--search')
       if (options.outputSchema) args.push('--output-schema', options.outputSchema)
-      if (options.json) args.push('--json')
       if (options.outputFile) args.push('-o', options.outputFile)
       // Codex CLI 0.142 removed the old approval flag from `codex exec`.
       // Keep accepting Akorith's option for cross-provider config, but do not
@@ -172,10 +175,10 @@ export const CONNECTIONS = {
 }
 
 function which(bin) {
-  return spawnSync(process.platform === 'win32' ? 'where' : 'which', [bin], { encoding: 'utf8' }).status === 0
+  return commandExists(bin)
 }
 function run(bin, args) {
-  const r = spawnSync(bin, args, { encoding: 'utf8' })
+  const r = runCommand(bin, args)
   return r.status === 0 ? r.stdout.trim() : ''
 }
 
@@ -233,10 +236,7 @@ export function allowedTools() {
 export function detectProviders() {
   const found = {}
   for (const p of Object.values(PROVIDERS)) {
-    const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', [p.bin], {
-      encoding: 'utf8',
-    })
-    found[p.id] = probe.status === 0
+    found[p.id] = commandExists(p.bin)
   }
   return found
 }
@@ -268,6 +268,7 @@ export function formatModel(selection) {
 
 export function codexErrorMessage(line) {
   const plain = stripAnsi(line).replace(/\s+/g, ' ').trim()
+  if (/\bWARN(?:ING)?\b/i.test(plain)) return ''
   if (!/\bERROR\b|not supported|invalid (?:request|model)|bad request/i.test(plain)) return ''
   const jsonStart = plain.indexOf('{')
   if (jsonStart >= 0) {
@@ -283,6 +284,106 @@ export function codexErrorMessage(line) {
     .replace(/^\S+\s+ERROR\s+/, '')
     .replace(/^.*?Bad Request:\s*/i, '')
     .trim()
+}
+
+export function parseCodexEvent(line) {
+  const plain = stripAnsi(line).trim()
+  if (!plain.startsWith('{')) return null
+  try {
+    const event = JSON.parse(plain)
+    return event && typeof event === 'object' && typeof event.type === 'string' ? event : null
+  } catch {
+    return null
+  }
+}
+
+function textLines(value) {
+  const normalized = String(value ?? '').replace(/\r/g, '')
+  if (!normalized) return []
+  const lines = normalized.split('\n')
+  if (lines.at(-1) === '') lines.pop()
+  return lines
+}
+
+// A bounded line diff for live file previews. LCS gives clean edits for normal
+// source files; very large changed regions use a prefix/suffix fallback so the
+// terminal never stalls on a generated file.
+export function diffTextLines(before, after, { maxLines = 60 } = {}) {
+  const oldLines = textLines(before)
+  const newLines = textLines(after)
+  const operations = []
+  const cells = oldLines.length * newLines.length
+
+  if (cells <= 250_000) {
+    const table = Array.from({ length: oldLines.length + 1 }, () => new Uint32Array(newLines.length + 1))
+    for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex--) {
+      for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex--) {
+        table[oldIndex][newIndex] = oldLines[oldIndex] === newLines[newIndex]
+          ? table[oldIndex + 1][newIndex + 1] + 1
+          : Math.max(table[oldIndex + 1][newIndex], table[oldIndex][newIndex + 1])
+      }
+    }
+    let oldIndex = 0
+    let newIndex = 0
+    while (oldIndex < oldLines.length || newIndex < newLines.length) {
+      if (oldIndex < oldLines.length && newIndex < newLines.length && oldLines[oldIndex] === newLines[newIndex]) {
+        oldIndex++
+        newIndex++
+      } else if (newIndex < newLines.length && (oldIndex === oldLines.length || table[oldIndex][newIndex + 1] > table[oldIndex + 1][newIndex])) {
+        operations.push({ type: 'add', text: newLines[newIndex++] })
+      } else {
+        operations.push({ type: 'del', text: oldLines[oldIndex++] })
+      }
+    }
+  } else {
+    let prefix = 0
+    while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++
+    let oldEnd = oldLines.length - 1
+    let newEnd = newLines.length - 1
+    while (oldEnd >= prefix && newEnd >= prefix && oldLines[oldEnd] === newLines[newEnd]) {
+      oldEnd--
+      newEnd--
+    }
+    for (let index = prefix; index <= oldEnd; index++) operations.push({ type: 'del', text: oldLines[index] })
+    for (let index = prefix; index <= newEnd; index++) operations.push({ type: 'add', text: newLines[index] })
+  }
+
+  const additions = operations.filter((line) => line.type === 'add').length
+  const deletions = operations.length - additions
+  const limit = Math.max(1, Number(maxLines) || 60)
+  return {
+    lines: operations.slice(0, limit),
+    additions,
+    deletions,
+    truncated: Math.max(0, operations.length - limit),
+  }
+}
+
+function fileSnapshot(filePath) {
+  try {
+    if (!existsSync(filePath)) return { exists: false, text: '', binary: false }
+    const text = readFileSync(filePath, 'utf8')
+    return { exists: true, text, binary: text.includes('\0') }
+  } catch {
+    return { exists: existsSync(filePath), text: '', binary: true }
+  }
+}
+
+function fileLabel(filePath, cwd = '') {
+  const clean = String(filePath || '').replace(/\\/g, '/')
+  const root = String(cwd || '').replace(/\\/g, '/').replace(/\/$/, '')
+  if (root && clean.toLowerCase().startsWith((root + '/').toLowerCase())) return clean.slice(root.length + 1)
+  return clean.split('/').filter(Boolean).slice(-2).join('/') || 'file'
+}
+
+function codexCommand(command) {
+  let value = String(command || '').replace(/\s+/g, ' ').trim()
+  const shell = value.match(/\s-(?:Command|c|lc)\s+([\s\S]+)$/i)
+  if (shell) value = shell[1].trim()
+  if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+    value = value.slice(1, -1)
+  }
+  return compactCommand(value || 'command', 88)
 }
 
 // Per-provider output renderers: turn the raw CLI streams into a quiet,
@@ -310,6 +411,10 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
     const diagnostics = []
     const flow = createFlowLinePrinter(print)
     const finalAnswer = []
+    const fileSnapshots = new Map()
+    const shownItems = new Set()
+    let structured = false
+    let structuredFailed = false
     const shownDiff = new Set() // codex reprints the cumulative diff; show each line once
     const isDiffMeta = (plain) => /^(diff --git |index [0-9a-f]|new file mode |deleted file mode |--- |\+\+\+ )/.test(plain)
     const isDiffLine = (plain) =>
@@ -320,10 +425,10 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
       if (isDiffMeta(plain)) return
       if (shownDiff.has(plain)) return
       shownDiff.add(plain)
-      if (/^@@ /.test(plain)) return void print(faint('  ' + plain))
-      if (/^\+/.test(plain)) return void print(diffAdd(plain.slice(1)))
-      if (/^-/.test(plain)) return void print(diffDel(plain.slice(1)))
-      print(faint('  ' + plain.replace(/^ /, '')))
+      if (/^@@ /.test(plain)) return void print(faint('    ' + plain))
+      if (/^\+/.test(plain)) return void print('    ' + diffAdd(plain.slice(1), terminalWidth() - 4))
+      if (/^-/.test(plain)) return void print('    ' + diffDel(plain.slice(1), terminalWidth() - 4))
+      print(faint('    ' + plain.replace(/^ /, '')))
       lastBlank = false
     }
     const say = (line) => {
@@ -391,12 +496,128 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
       closeThinking()
       closeExec()
     }
+    const rememberFiles = (item = {}) => {
+      for (const change of item.changes || []) {
+        const filePath = String(change.path || '')
+        if (filePath && !fileSnapshots.has(filePath)) fileSnapshots.set(filePath, fileSnapshot(filePath))
+      }
+    }
+    const renderFileChanges = (item = {}) => {
+      for (const change of item.changes || []) {
+        const filePath = String(change.path || '')
+        if (!filePath) continue
+        const before = fileSnapshots.get(filePath)
+        const after = fileSnapshot(filePath)
+        const kind = change.kind === 'add' ? 'created' : change.kind === 'delete' ? 'deleted' : 'updated'
+        if (!before || before.binary || after.binary) {
+          print(toolCardHeader({ name: 'edit', status: 'completed', title: fileLabel(filePath, opts.cwd), subtitle: kind }))
+          fileSnapshots.delete(filePath)
+          continue
+        }
+        const diff = diffTextLines(before.text, after.text)
+        const counts = diff.additions || diff.deletions ? ` · +${diff.additions} -${diff.deletions}` : ''
+        print(toolCardHeader({
+          name: 'edit',
+          status: 'completed',
+          title: fileLabel(filePath, opts.cwd),
+          subtitle: kind + counts,
+        }))
+        for (const line of diff.lines) {
+          print('    ' + (line.type === 'add'
+            ? diffAdd(line.text, terminalWidth() - 4)
+            : diffDel(line.text, terminalWidth() - 4)))
+        }
+        if (diff.truncated) print(faint(`    … ${diff.truncated} more changed lines`))
+        fileSnapshots.delete(filePath)
+        lastBlank = false
+      }
+    }
+    const renderCodexEvent = (event) => {
+      const item = event.item || {}
+      if (event.type === 'item.started') {
+        if (item.type === 'file_change') {
+          rememberFiles(item)
+          setStatus('editing files')
+        } else if (item.type === 'command_execution') {
+          setStatus('running ' + codexCommand(item.command))
+        } else if (item.type === 'web_search') {
+          setStatus('searching the web')
+        }
+        return
+      }
+      if (event.type === 'item.completed') {
+        const key = String(item.id || '')
+        if (key && shownItems.has(key)) return
+        if (key) shownItems.add(key)
+        if (item.type === 'agent_message') {
+          setStatus('writing response')
+          for (const line of String(item.text || '').split(/\r?\n/)) flow(line)
+          spokeFromLog = true
+          return
+        }
+        if (item.type === 'reasoning') {
+          for (const line of String(item.text || item.summary || '').split(/\r?\n/)) renderThinking(line)
+          return
+        }
+        if (item.type === 'command_execution') {
+          closeThinking()
+          const failed = Number(item.exit_code) !== 0
+          print(toolCardHeader({ name: 'exec', status: failed ? 'error' : 'completed', subtitle: codexCommand(item.command) }))
+          const output = compactToolOutput(item.aggregated_output, { maxLines: 4 })
+          const useful = failed ? output : output.filter((line) => /^(?:tests?|suites?|pass|fail|duration|exit)\b/i.test(line))
+          if (useful.length) {
+            for (const row of toolCardBody(useful.map((line) => dim(line)), { width: terminalWidth() })) print(row)
+          }
+          lastBlank = false
+          return
+        }
+        if (item.type === 'file_change') {
+          closeThinking()
+          renderFileChanges(item)
+          return
+        }
+        if (item.type === 'web_search') {
+          print(toolCardHeader({ name: 'search', status: 'completed', subtitle: compactCommand(item.query || 'web search', 88) }))
+          lastBlank = false
+          return
+        }
+        if (item.type === 'mcp_tool_call') {
+          const failed = item.status === 'failed' || Boolean(item.error)
+          print(toolCardHeader({ name: 'default', status: failed ? 'error' : 'completed', title: item.tool || 'tool', subtitle: item.server || '' }))
+          lastBlank = false
+        }
+        return
+      }
+      if (event.type === 'turn.completed') {
+        const usage = event.usage || {}
+        tokenReport = {
+          input: Number(usage.input_tokens ?? usage.input) || 0,
+          output: Number(usage.output_tokens ?? usage.output) || 0,
+          total: Number(usage.total_tokens ?? usage.total) ||
+            (Number(usage.input_tokens ?? usage.input) || 0) + (Number(usage.output_tokens ?? usage.output) || 0),
+        }
+        setStatus('wrapping up')
+        return
+      }
+      if (event.type === 'turn.failed' || event.type === 'error') {
+        structuredFailed = true
+        const message = event.error?.message || event.message || 'Codex turn failed.'
+        if (!diagnostics.includes(message)) diagnostics.push(message)
+      }
+    }
     return {
       stdoutLine(line) {
+        const event = parseCodexEvent(line)
+        if (event) {
+          structured = true
+          renderCodexEvent(event)
+          return
+        }
         finalAnswer.push(line)
       },
       stderrLine(line) {
         const plain = stripAnsi(line).trimEnd()
+        if (structured) return
         const diagnostic = codexErrorMessage(plain)
         if (diagnostic && !diagnostics.includes(diagnostic)) diagnostics.push(diagnostic)
         if (dashes < 2) {
@@ -452,15 +673,15 @@ function createRenderer(providerId, print, setStatus = () => {}, opts = {}) {
       flush() {
         closePhase()
         // stderr log went missing (future codex versions?) — fall back to stdout
-        if (!spokeFromLog && finalAnswer.some((l) => stripAnsi(l).trim())) {
+        if (!structured && !spokeFromLog && finalAnswer.some((l) => stripAnsi(l).trim())) {
           for (const line of finalAnswer) flow(line)
         }
-        for (const diagnostic of diagnostics.slice(0, 3)) {
+        const visibleDiagnostics = structured && !structuredFailed ? [] : diagnostics.slice(0, 3)
+        for (const diagnostic of visibleDiagnostics) {
           print(red('  ✗ Codex: ') + bright(diagnostic))
         }
         if (tokenReport) {
           reportUsage(tokenReport)
-          print(faint('  · ') + dim('tokens ' + formatTokenCount(tokenReport.total || tokenReport.input + tokenReport.output)))
         }
       },
     }
@@ -575,7 +796,7 @@ export function formatReasoningBlock(lines = [], { width = terminalWidth(), maxL
   const visible = notes.length > limit
     ? [...notes.slice(0, limit - 2), `… ${notes.length - limit + 1} more reasoning lines`, notes.at(-1)]
     : notes
-  const header = violet('  ◆ ') + bold('Reasoning') + faint(` · ${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`)
+  const header = violet('    ◆ ') + bold('Reasoning') + faint(` · ${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`)
   return [header, ...toolCardBody(visible.map((line) => dim(line)), { width: Math.max(32, width) })]
 }
 
@@ -673,11 +894,6 @@ function parseTokenUsage(line) {
   return usage.total || usage.input || usage.output ? usage : null
 }
 
-function formatTokenCount(value) {
-  const number = Number(value) || 0
-  return number.toLocaleString('en-US')
-}
-
 function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
   let lastBlank = true
   let suppressListingOutput = false
@@ -703,13 +919,13 @@ function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
   }
   const printCodeBlock = (body, lang) => {
     const label = lang ? dim(lang) : faint('code')
-    print(faint('  │ ') + label)
+    print(faint('    │ ') + label)
     const lines = body.split('\n')
     const styled = highlight(body, lang)
     for (let i = 0; i < styled.length; i++) {
-      print(faint('  │ ') + styled[i])
+      print(faint('    │ ') + styled[i])
     }
-    print(faint('  ╵'))
+    print(faint('    ╵'))
   }
   const emitPlain = (line) => {
     const plain = stripAnsi(line).trim()
@@ -719,7 +935,8 @@ function createFlowLinePrinter(print, { suppressRuntimeBanner = false } = {}) {
       return
     }
     const raw = stripAnsi(line)
-    const aligned = /^\s/.test(raw) || /\x1b\[48;/.test(String(line)) ? line : `    ${line}`
+    const leading = raw.match(/^ */)?.[0].length || 0
+    const aligned = ' '.repeat(Math.max(0, 4 - leading)) + line
     print(aligned)
     lastBlank = false
   }
@@ -863,7 +1080,7 @@ function diffAwareLine(print) {
     if (!card || card.headerPrinted) return
     card.headerPrinted = true
     const file = card.path || '?'
-    print(violet('  ▸ ') + bold(file.split('/').pop()) + faint('  ' + chip(card.action)) +
+    print(violet('    ▸ ') + bold(file.split('/').pop()) + faint('  ' + chip(card.action)) +
       faint('   ' + green('+' + card.adds) + ' ' + red('-' + card.dels)))
   }
   const printCardFooter = () => {
@@ -913,17 +1130,17 @@ function diffAwareLine(print) {
       }
       if (/^@@ /.test(t)) {
         printCardHeader()
-        return void print(faint('  ' + t))
+        return void print(faint('    ' + t))
       }
       if (/^\+/.test(t)) {
         printCardHeader()
         if (card) card.adds++
-        return void print(diffAdd(t.slice(1)))
+        return void print('    ' + diffAdd(t.slice(1), terminalWidth() - 4))
       }
       if (/^-/.test(t)) {
         printCardHeader()
         if (card) card.dels++
-        return void print(diffDel(t.slice(1)))
+        return void print('    ' + diffDel(t.slice(1), terminalWidth() - 4))
       }
       if (t === '') {
         closeRegion()
@@ -931,7 +1148,7 @@ function diffAwareLine(print) {
       }
       if (/^ /.test(t)) {
         printCardHeader()
-        return void print(faint('  ' + t.replace(/^ /, '')))
+        return void print(faint('    ' + t.replace(/^ /, '')))
       }
       // anything else ends the diff region
       closeRegion()
@@ -969,7 +1186,8 @@ export function runTurn({ selection, prompt, resume, cwd, mode = 'act', options 
   return new Promise((resolve) => {
     const env = { ...process.env, FORCE_COLOR: '1', CLICOLOR_FORCE: '1' }
     delete env.NO_COLOR
-    const child = spawn(provider.bin, args, {
+    const resolved = resolveCommand(provider.bin)
+    const child = spawn(resolved.command, [...resolved.argsPrefix, ...args], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       env,
@@ -981,7 +1199,7 @@ export function runTurn({ selection, prompt, resume, cwd, mode = 'act', options 
       spinner.log(line)
       if (onLine) onLine(stripAnsi(line).replace(/\s+$/, ''))
     }
-    const renderer = createRenderer(provider.id, print, (status) => spinner.setStatus(status), { thinking: options.thinking, onUsage })
+    const renderer = createRenderer(provider.id, print, (status) => spinner.setStatus(status), { thinking: options.thinking, onUsage, cwd })
     const out = lineSplitter((l) => renderer.stdoutLine(l))
     const err = lineSplitter((l) => renderer.stderrLine(l))
     child.stdout.on('data', (chunk) => out.push(chunk))

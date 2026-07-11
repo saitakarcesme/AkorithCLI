@@ -44,7 +44,7 @@ test('viewport matrix keeps every UI state inside the terminal', () => {
     assertFrame(buildFrame({
       ...common,
       transcript: Array.from({ length: 120 }, (_, index) => `output ${index} · ${'content '.repeat(12)}`),
-      spinner: '    Akoriting · reading files',
+      spinner: '    Akorithing... · reading files',
     }), width, height)
     assertFrame(buildFrame({
       ...common,

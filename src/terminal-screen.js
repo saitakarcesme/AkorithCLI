@@ -174,7 +174,7 @@ export function composerLayout({
   const firstVisible = Math.max(0, Math.min(wrapped.cursorRow - maxInputRows + 1, Math.max(0, wrapped.rows.length - maxInputRows)))
   const visibleRows = wrapped.rows.slice(firstVisible, firstVisible + maxInputRows)
   while (visibleRows.length < Math.min(2, maxInputRows)) visibleRows.push('')
-  const boxLines = [boxBorder('╭', '─', '╮', outerWidth, busy ? 'Working' : label)]
+  const boxLines = [boxBorder('╭', '─', '╮', outerWidth, busy ? 'Akorithing...' : label)]
   visibleRows.forEach((row, index) => {
     const marker = index === 0 && firstVisible === 0 ? '› ' : '  '
     boxLines.push(`│ ${marker}${padVisible(row, contentWidth)} │`)
@@ -366,7 +366,9 @@ export function buildFrame({
   todos = [],
 } = {}) {
   const viewport = normalizeViewport(width, height)
-  const brand = brandHeaderLines(viewport)
+  // Keep the large wordmark for the welcome screen. Once work starts, the
+  // transcript gets those rows back, matching a focused coding-agent feed.
+  const brand = transcript.length || busy ? [] : brandHeaderLines(viewport)
   const header = headerLines({ ...viewport, model, mode, cwd, branch, dirty, session, busy, connected })
   const separator = fitScreenLine(faint('─'.repeat(viewport.width)), viewport.width)
   const top = [
@@ -410,8 +412,9 @@ export function buildFrame({
   const mainPane = [...body, ...composerRows]
   while (mainPane.length < paneHeight) mainPane.push(' '.repeat(mainWidth))
   let pane
+  let sidebar = []
   if (sidebarVisible) {
-    const sidebar = sidebarLines({
+    sidebar = sidebarLines({
       width: sidebarWidth,
       height: paneHeight,
       model,
@@ -441,6 +444,11 @@ export function buildFrame({
     tier: composer.tier,
     bodyHeight,
     sidebarVisible,
+    topLines: top,
+    mainPaneLines: mainPane,
+    sidebarLines: sidebar,
+    mainWidth,
+    sidebarColumn: sidebarVisible ? mainWidth + 1 : 0,
   }
 }
 
@@ -517,7 +525,9 @@ export class TerminalScreen {
     if (this.started || !this.output.isTTY) return false
     this.started = true
     activeScreen = this
-    this.output.write('\x1b[?1049h\x1b[?6l\x1b[?7l\x1b[?1000h\x1b[?1006h\x1b[r\x1b[2J\x1b[H\x1b[?25l')
+    // Do not enable terminal mouse reporting: native text selection and
+    // Ctrl+Shift+C must keep working in Windows Terminal and other emulators.
+    this.output.write('\x1b[?1049h\x1b[?6l\x1b[?7l\x1b[r\x1b[2J\x1b[H\x1b[?25l')
     this.renderNow()
     return true
   }
@@ -529,7 +539,7 @@ export class TerminalScreen {
     if (this.renderTimer) clearTimeout(this.renderTimer)
     this.renderTimer = null
     if (activeScreen === this) activeScreen = null
-    this.output.write('\x1b[?1006l\x1b[?1000l\x1b[?7h\x1b[?6l\x1b[r\x1b[?25h\x1b[0m\x1b[?1049l')
+    this.output.write('\x1b[?7h\x1b[?6l\x1b[r\x1b[?25h\x1b[0m\x1b[?1049l')
   }
 
   append(...values) {
@@ -543,7 +553,7 @@ export class TerminalScreen {
     this.todos = extractPlanTodos(this.transcript)
     this.transcriptOffset = Math.min(Math.max(0, this.transcript.length - 1), pinnedOffset)
     if (this.transcriptOffset) {
-      this.notice = `scrollback · ${this.transcriptOffset} rows from latest · wheel down / PageDown returns`
+      this.notice = `scrollback · ${this.transcriptOffset} rows from latest · PageDown returns`
     }
     this.scheduleRender()
   }
@@ -554,6 +564,15 @@ export class TerminalScreen {
     this.notice = ''
     this.todos = []
     this.scheduleRender()
+  }
+
+  transcriptText(start = 0) {
+    const first = Math.max(0, Math.min(Number(start) || 0, this.transcript.length))
+    return this.transcript
+      .slice(first)
+      .map((line) => stripAnsi(line).replace(/\s+$/, ''))
+      .join('\n')
+      .trim()
   }
 
   setOverlay(lines) {
@@ -586,7 +605,7 @@ export class TerminalScreen {
     if (!amount) return
     this.overlay = null
     this.transcriptOffset = Math.max(0, Math.min(this.transcript.length - 1, this.transcriptOffset + amount))
-    this.notice = this.transcriptOffset ? `scrollback · ${this.transcriptOffset} rows from latest · wheel down / PageDown returns` : ''
+    this.notice = this.transcriptOffset ? `scrollback · ${this.transcriptOffset} rows from latest · PageDown returns` : ''
     this.scheduleRender()
   }
 
@@ -646,7 +665,24 @@ export class TerminalScreen {
     const resized = !this.lastViewport || this.lastViewport.width !== viewport.width || this.lastViewport.height !== viewport.height
     this.lastViewport = viewport
     const frame = buildFrame({ ...viewport, ...this.state(), transcript: this.transcript, transcriptOffset: this.transcriptOffset, overlay: this.overlay, notice: this.notice, spinner: this.spinner, todos: this.todos })
-    const body = frame.lines.map((line, index) => `\x1b[${index + 1};1H${line}\x1b[K`).join('')
+    let body
+    if (frame.sidebarVisible) {
+      const top = frame.topLines
+        .map((line, index) => `\x1b[${index + 1};1H\x1b[2K${line}`)
+        .join('')
+      const pane = frame.mainPaneLines
+        .map((line, index) => {
+          const row = frame.topLines.length + index + 1
+          const sidebar = frame.sidebarLines[index] || ''
+          return `\x1b[${row};1H\x1b[2K${line}` +
+            `\x1b[${row};${frame.sidebarColumn}H${dim('│')}` +
+            `\x1b[${row};${frame.sidebarColumn + 1}H${sidebar}\x1b[K`
+        })
+        .join('')
+      body = top + pane
+    } else {
+      body = frame.lines.map((line, index) => `\x1b[${index + 1};1H${line}\x1b[K`).join('')
+    }
     const clear = resized ? '\x1b[2J' : ''
     this.output.write(`\x1b[?25l\x1b[?6l\x1b[?7l\x1b[r${clear}${body}\x1b[${frame.cursorRow};${frame.cursorColumn}H\x1b[?25h`)
   }

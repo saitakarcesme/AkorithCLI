@@ -34,7 +34,7 @@ test('spinner renders through the full-screen adapter without raw cursor writes'
   spinner.stop()
   setTerminalAdapter(null)
 
-  assert.ok(events.some(([kind, value]) => kind === 'spinner' && value.startsWith('    ') && value.includes('Akoriting')))
+  assert.ok(events.some(([kind, value]) => kind === 'spinner' && value.startsWith('    ') && value.includes('Akorithing...')))
   assert.ok(events.some(([kind, value]) => kind === 'spinner' && value.includes('reading files')))
   assert.ok(events.some(([kind, value]) => kind === 'line' && value === 'provider output'))
   assert.deepEqual(events.at(-1), ['spinner', ''])

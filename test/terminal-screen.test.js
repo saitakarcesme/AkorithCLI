@@ -157,10 +157,10 @@ test('terminal timeline can jump, search, and return to the tail', () => {
   assert.ok(screen.timelineLines().some((line) => line.includes('beta target')))
   screen.stop()
   assert.ok(writes.some((value) => value.includes('\x1b[?1049h')))
-  assert.ok(writes.some((value) => value.includes('\x1b[?7l\x1b[?1000h\x1b[?1006h')))
+  assert.ok(!writes.some((value) => value.includes('\x1b[?1000h') || value.includes('\x1b[?1006h')))
   assert.ok(writes.some((value) => value.includes('\x1b[?6l\x1b[r')))
   assert.ok(writes.some((value) => value.includes('\x1b[1;1H')))
-  assert.ok(writes.some((value) => value.includes('\x1b[?1006l\x1b[?1000l\x1b[?7h')))
+  assert.ok(writes.some((value) => value.includes('\x1b[?7h')))
   assert.ok(writes.some((value) => value.includes('\x1b[?1049l')))
 })
 
@@ -207,7 +207,14 @@ test('large pixel logo remains in splash and conversation frames', () => {
   const conversation = buildFrame({ width: 104, height: 32, transcript: ['hello'] })
   assert.equal(brandHeaderLines({ width: 104, height: 32 }).length, 6)
   assert.ok(splash.lines.some((line) => line.includes('█████')))
-  assert.ok(conversation.lines.some((line) => line.includes('█████')))
+  assert.ok(!conversation.lines.some((line) => line.includes('█████')))
+})
+
+test('transcript text is ANSI-free and can start at the latest turn', () => {
+  const screen = new TerminalScreen({ output: { isTTY: false } })
+  screen.append('\x1b[32mfirst\x1b[0m\n\nsecond   ')
+  assert.equal(screen.transcriptText(), 'first\n\nsecond')
+  assert.equal(screen.transcriptText(2), 'second')
 })
 
 test('short transcript begins directly below the persistent header', () => {
@@ -239,7 +246,7 @@ test('wide sidebar divider occupies the same column on every pane row', () => {
     width: 159,
     height: 46,
     transcript: Array.from({ length: 80 }, (_, index) => `streamed output ${index}`),
-    spinner: '    Akoriting · running command',
+    spinner: '    Akorithing... · running command',
   })
   const topRows = brandHeaderLines({ width: 159, height: 46 }).length + headerLines({ width: 159, height: 46 }).length + 1
   const dividerColumn = 159 - 38 - 1
@@ -256,6 +263,8 @@ test('full-screen paint addresses every row absolutely from the first row', () =
   assert.ok(paint)
   assert.ok(paint.includes('█████'))
   assert.ok(!paint.includes('\n'))
+  const dividerWrites = paint.match(/\x1b\[\d+;121H/g) || []
+  assert.equal(dividerWrites.length, 37)
   screen.stop()
 })
 

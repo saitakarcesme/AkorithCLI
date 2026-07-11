@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { nativeSplashLines, resolveModelSpec, shouldUseFullScreen } from '../src/repl.js'
+import { nativeSplashLines, parseOllamaList, resolveModelSpec, shouldUseFullScreen } from '../src/repl.js'
 import { stripAnsi, visibleLength } from '../src/ui.js'
 
 const tty = { isTTY: true }
@@ -44,5 +44,28 @@ test('interactive OpenCode model specs retain their full provider model id', () 
   assert.deepEqual(resolveModelSpec('opencode-go/glm-5.2'), {
     provider: 'opencode',
     model: 'opencode-go/glm-5.2',
+  })
+})
+
+test('parses local Ollama models from ollama list output', () => {
+  assert.deepEqual(parseOllamaList(`
+NAME                       ID              SIZE      MODIFIED
+qwen3:latest               500a1f067a9f    5.2 GB    2 days ago
+deepseek-r1:8b             28f8fd6cdc67    4.9 GB    3 weeks ago
+qwen3:latest               500a1f067a9f    5.2 GB    2 days ago
+`), ['qwen3:latest', 'deepseek-r1:8b'])
+})
+
+test('interactive Ollama choices resolve local model aliases', () => {
+  const choices = [{
+    label: 'Local · qwen3:latest',
+    spec: 'ollama/qwen3:latest',
+    visibleSpec: 'qwen3:latest',
+    parsed: { provider: 'ollama', model: 'qwen3:latest' },
+    aliases: ['qwen3:latest', 'qwen3'],
+  }]
+  assert.deepEqual(resolveModelSpec('qwen3', choices), {
+    provider: 'ollama',
+    model: 'qwen3:latest',
   })
 })

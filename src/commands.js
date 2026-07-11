@@ -3,6 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { formatModel, runTurn } from './providers.js'
+import { commandExists, resolveCommand, runCommand } from './runtime.js'
 import {
   archiveSession, deleteSession, findSession, forkSession, listSessions,
 } from './sessions.js'
@@ -10,11 +11,7 @@ import {
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 function run(bin, args, options = {}) {
-  return spawnSync(bin, args, { encoding: 'utf8', ...options })
-}
-
-function commandExists(bin) {
-  return run(process.platform === 'win32' ? 'where' : 'which', [bin]).status === 0
+  return runCommand(bin, args, options)
 }
 
 function versionOf(bin, args = ['--version']) {
@@ -35,9 +32,10 @@ function emitOutput(onOutput, value) {
 }
 
 function runLogged(bin, args, { cwd, onOutput = null } = {}) {
+  const resolved = resolveCommand(bin)
   const result = onOutput
-    ? spawnSync(bin, args, { cwd, encoding: 'utf8' })
-    : spawnSync(bin, args, { cwd, stdio: 'inherit' })
+    ? spawnSync(resolved.command, [...resolved.argsPrefix, ...args], { cwd, encoding: 'utf8' })
+    : spawnSync(resolved.command, [...resolved.argsPrefix, ...args], { cwd, stdio: 'inherit' })
   if (onOutput) {
     if (result.stdout) onOutput(result.stdout.trimEnd())
     if (result.stderr) onOutput(result.stderr.trimEnd())
@@ -255,6 +253,6 @@ export function runSessionCommand(command, args = []) {
 }
 
 export function runCodexPassthrough(args) {
-  const result = spawnSync('codex', args, { stdio: 'inherit' })
+  const result = runCommand('codex', args, { stdio: 'inherit' })
   return result.status ?? 1
 }

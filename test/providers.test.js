@@ -2,12 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   codexErrorMessage,
+  diffTextLines,
   formatModel,
   formatReasoningBlock,
   normalizeProviderMetadata,
   openCodeToolEventLines,
   parseOpenCodeEvent,
   parseModelSpec,
+  parseCodexEvent,
   PROVIDERS,
 } from '../src/providers.js'
 import { stripAnsi } from '../src/ui.js'
@@ -29,6 +31,25 @@ test('Codex startup failures surface their API diagnostic', () => {
   const line = '2026-07-10T00:00:00Z ERROR codex_api: unexpected status 400 Bad Request: {"detail":"The requested model is not supported."}'
   assert.equal(codexErrorMessage(line), 'The requested model is not supported.')
   assert.equal(codexErrorMessage('ordinary preamble'), '')
+})
+
+test('Codex JSONL events are recognized without accepting ordinary text', () => {
+  const event = parseCodexEvent('{"type":"item.completed","item":{"type":"agent_message","text":"done"}}')
+  assert.equal(event.type, 'item.completed')
+  assert.equal(event.item.text, 'done')
+  assert.equal(parseCodexEvent('ordinary response'), null)
+  assert.equal(parseCodexEvent('{not json}'), null)
+})
+
+test('live text diffs keep additions and deletions distinct and bounded', () => {
+  const diff = diffTextLines('alpha\nbeta\ngamma\n', 'alpha\nupdated\ngamma\ndelta\n', { maxLines: 2 })
+  assert.equal(diff.additions, 2)
+  assert.equal(diff.deletions, 1)
+  assert.deepEqual(diff.lines, [
+    { type: 'del', text: 'beta' },
+    { type: 'add', text: 'updated' },
+  ])
+  assert.equal(diff.truncated, 1)
 })
 
 test('provider reasoning is collected into one bounded block', () => {

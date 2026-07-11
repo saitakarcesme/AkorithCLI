@@ -44,7 +44,7 @@ const state = stateArg === 'typing'
           '  › shell  npm test',
           '  ✓ running responsive terminal checks',
         ],
-        spinner: '    Akoriting···   olympus · 12s · running tests',
+        spinner: '    Akorithing... · running tests · 12s',
         todos: [
           { text: 'Anchor every frame row', done: true },
           { text: 'Preserve streaming scrollback', done: true },
