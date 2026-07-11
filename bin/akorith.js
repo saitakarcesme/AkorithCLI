@@ -52,7 +52,7 @@ Common options:
 
 Model specs: <provider>[/<model>] with provider one of claude, codex, opencode, ollama.
 OpenCode exact ids also work as -m opencode-go/glm-5.2.
-Inside the workspace: native terminal scrollback, an inline composer, /model to switch,
+Inside the workspace: responsive dashboard, bottom composer, /model to switch,
 /timeline to browse saved output, /options for run flags, and /help for everything else.`)
 }
 

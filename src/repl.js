@@ -256,8 +256,7 @@ function readGitHeaderState(cwd) {
 }
 
 export function shouldUseFullScreen({ env = process.env, input = process.stdin, output = process.stdout } = {}) {
-  return env.AKORITH_FULLSCREEN === '1' &&
-    env.AKORITH_NO_FULLSCREEN !== '1' &&
+  return env.AKORITH_NO_FULLSCREEN !== '1' &&
     Boolean(input.isTTY) && Boolean(output.isTTY) && env.TERM !== 'dumb'
 }
 
@@ -455,10 +454,9 @@ export async function startRepl({ version, initialModel, initialOptions = {}, in
     error: console.error.bind(console),
     clear: console.clear.bind(console),
   }
-  // The normal terminal buffer is the primary UI. It gives long model turns,
-  // tool output, and completed prompts native, smooth scrollback instead of
-  // trapping them in an alternate-screen viewport. The old dashboard remains
-  // available as an explicit opt-in for people who prefer a fixed composer.
+  // Interactive TTY sessions default to the responsive dashboard: a stable
+  // header, transcript pane, sidebar on wide screens, and bottom composer.
+  // AKORITH_NO_FULLSCREEN=1 keeps the plain native scrollback fallback.
   const useFullScreen = shouldUseFullScreen()
   if (useFullScreen) {
     const editor = new InputEditor({ complete: completeEditor })

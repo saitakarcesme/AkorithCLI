@@ -5,14 +5,14 @@ import { stripAnsi, visibleLength } from '../src/ui.js'
 
 const tty = { isTTY: true }
 
-test('native terminal scrollback is the default interactive layout', () => {
-  assert.equal(shouldUseFullScreen({ env: { TERM: 'xterm-256color' }, input: tty, output: tty }), false)
+test('responsive full-screen dashboard is the default interactive layout', () => {
+  assert.equal(shouldUseFullScreen({ env: { TERM: 'xterm-256color' }, input: tty, output: tty }), true)
 })
 
-test('legacy full-screen layout requires an explicit opt in', () => {
+test('native scrollback fallback requires an explicit opt out', () => {
   assert.equal(shouldUseFullScreen({ env: { TERM: 'xterm-256color', AKORITH_FULLSCREEN: '1' }, input: tty, output: tty }), true)
   assert.equal(shouldUseFullScreen({
-    env: { TERM: 'xterm-256color', AKORITH_FULLSCREEN: '1', AKORITH_NO_FULLSCREEN: '1' },
+    env: { TERM: 'xterm-256color', AKORITH_NO_FULLSCREEN: '1' },
     input: tty,
     output: tty,
   }), false)

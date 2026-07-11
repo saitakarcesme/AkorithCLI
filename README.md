@@ -131,23 +131,23 @@ hidden private chain-of-thought from models.
 
 ### Responsive terminal workspace
 
-Interactive sessions use the terminal's native scrollback by default. Prompts,
-reasoning summaries, tool cards, diffs, and final responses flow downward as one
-continuous log, so trackpad/wheel scrolling stays smooth and completed output is
-never trapped inside a small viewport. The startup header scrolls away naturally.
-Non-TTY and `TERM=dumb` output use the same script-friendly flow.
+Interactive TTY sessions use the responsive Akorith dashboard by default: a
+stable header, transcript pane, bottom composer, and a right sidebar on wide
+terminals. Prompts, reasoning summaries, tool cards, diffs, and final responses
+stay inside that frame while the layout adapts between compact, regular, and
+wide windows. Non-TTY and `TERM=dumb` output use the plain script-friendly flow.
 
 - `Enter` sends; `Shift+Enter` or `Ctrl+J` inserts a newline.
 - `↑`/`↓` recall prompt history and restore the unfinished draft.
 - `Ctrl+P` opens the filterable command palette; `Alt+M` opens models where supported.
-- Mouse wheel, trackpad, and the terminal's normal shortcuts scroll native history. `/timeline` remains available for session transcript navigation.
+- Mouse wheel or `PageUp`/`PageDown` scrolls the transcript; `/timeline` remains available for session transcript navigation.
 - `Ctrl+T` cycles reasoning visibility; `Ctrl+C` cancels a turn or activates the exit guard.
 - `AKORITH_REDUCED_MOTION=1` disables animation and `AKORITH_MONO=1` disables brand color.
-  `AKORITH_FULLSCREEN=1` opts into the legacy fixed dashboard; `AKORITH_NO_FULLSCREEN=1`
-  always forces native scrollback.
+  `AKORITH_NO_FULLSCREEN=1` forces the plain native scrollback fallback.
 
-Model, mode, context, and token totals stay in the inline composer status instead
-of a right sidebar, avoiding clipped columns when the terminal window changes.
+Wide terminals report model, permission mode, provider context, cumulative
+tokens, session state, and active plan tasks in the right sidebar. Narrower
+terminals keep model, mode, and token totals in the composer footer.
 Keyboard shortcuts remain available through `/help`.
 
 ### Permission modes
